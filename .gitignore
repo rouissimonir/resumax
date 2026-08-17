@@ -5,7 +5,6 @@
 *.txt
 *.json
 *.txt
-*.env
 # dependencies
 node_modules/
 

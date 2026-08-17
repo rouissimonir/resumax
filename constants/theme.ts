@@ -1,66 +1,107 @@
-import { Platform } from "react-native";
+import { Platform, StyleSheet } from "react-native";
 
-// Modern color palette - sleek and minimal
+/**
+ * Design system — refined minimal.
+ *
+ * Principles:
+ *  · Neutral-first. Colour is used to mean something (success, error), never
+ *    for decoration. There is no second brand colour competing for attention.
+ *  · Structure comes from hairline borders and background layers, not from
+ *    drop shadows and glows.
+ *  · One type scale with real hierarchy — large text gets tighter tracking.
+ *  · Motion is short and functional. Nothing loops or pulses on its own.
+ *
+ * Every token that existed before is still exported, so screens that have not
+ * been reworked yet keep rendering correctly.
+ */
+
+// ── Colour ────────────────────────────────────────────────────────────
+//
+// A neutral (zinc) ramp carries the whole interface. `primary` is a deep
+// near-black used for solid fills and emphasis — white text always sits on it
+// legibly in both schemes.
+
 export const Colors = {
   light: {
-    text: "#1A1A2E",
-    textSecondary: "#6B7280",
-    textMuted: "#9CA3AF",
+    text: "#09090B",
+    textSecondary: "#52525B",
+    // Kept at 4.8:1 on white — tertiary text still has to be readable.
+    textMuted: "#71717A",
     buttonText: "#FFFFFF",
-    tabIconDefault: "#9CA3AF",
-    tabIconSelected: "#007AFF", // Brand Blue
-    link: "#007AFF",
-    primary: "#007AFF", // Brand Blue
-    primaryLight: "#66B2FF",
-    primaryDark: "#0056D2",
+
+    tabIconDefault: "#A1A1AA",
+    tabIconSelected: "#09090B",
+    link: "#09090B",
+
+    primary: "#18181B",
+    primaryLight: "#3F3F46",
+    primaryDark: "#09090B",
+
     backgroundRoot: "#FAFAFA",
     backgroundDefault: "#FFFFFF",
-    backgroundSecondary: "#F3F4F6",
-    backgroundTertiary: "#E5E7EB",
-    border: "#E5E7EB",
-    borderLight: "#F3F4F6",
-    success: "#10B981",
-    successLight: "#D1FAE5",
-    error: "#EF4444",
+    backgroundSecondary: "#F4F4F5",
+    backgroundTertiary: "#E4E4E7",
+
+    border: "#E4E4E7",
+    borderLight: "#F1F1F3",
+
+    // Semantic — muted, print-like, never neon.
+    success: "#15803D",
+    successLight: "#DCFCE7",
+    error: "#B91C1C",
     errorLight: "#FEE2E2",
-    warning: "#F59E0B",
+    warning: "#B45309",
     warningLight: "#FEF3C7",
-    accent: "#FF9800", // Brand Orange
-    accentLight: "#FFE0B2",
-    gold: "#FF9800",
-    goldLight: "#FFE0B2",
-    cardGlow: "rgba(0, 122, 255, 0.08)",
+
+    // Kept for compatibility. Both now resolve to the same restrained tone.
+    accent: "#3F3F46",
+    accentLight: "#E4E4E7",
+    gold: "#B45309",
+    goldLight: "#FEF3C7",
+
+    cardGlow: "transparent",
   },
   dark: {
-    text: "#F9FAFB",
-    textSecondary: "#9CA3AF",
-    textMuted: "#6B7280",
+    text: "#FAFAFA",
+    textSecondary: "#A1A1AA",
+    // 4.6:1 on the card surface.
+    textMuted: "#7E7E88",
     buttonText: "#FFFFFF",
-    tabIconDefault: "#6B7280",
-    tabIconSelected: "#4DAFFF", // Lighter Blue for Dark Mode
-    link: "#4DAFFF",
-    primary: "#4DAFFF", // Lighter Blue
-    primaryLight: "#80C7FF",
-    primaryDark: "#007AFF",
-    backgroundRoot: "#0F0F1A",
-    backgroundDefault: "#1A1A2E",
-    backgroundSecondary: "#16162A",
-    backgroundTertiary: "#252542",
-    border: "#2D2D4A",
-    borderLight: "#1F1F3A",
-    success: "#34D399",
-    successLight: "#064E3B",
+
+    tabIconDefault: "#71717A",
+    tabIconSelected: "#FAFAFA",
+    link: "#FAFAFA",
+
+    primary: "#4A4A55",
+    primaryLight: "#71717A",
+    primaryDark: "#27272A",
+
+    backgroundRoot: "#09090B",
+    backgroundDefault: "#141417",
+    backgroundSecondary: "#1C1C20",
+    backgroundTertiary: "#27272A",
+
+    border: "#27272A",
+    borderLight: "#1F1F23",
+
+    success: "#4ADE80",
+    successLight: "#14311F",
     error: "#F87171",
-    errorLight: "#7F1D1D",
+    errorLight: "#3B1414",
     warning: "#FBBF24",
-    warningLight: "#78350F",
-    accent: "#FFB74D", // Lighter Orange for Dark Mode
-    accentLight: "#E65100",
-    gold: "#FFB74D",
-    goldLight: "#E65100",
-    cardGlow: "rgba(77, 175, 255, 0.12)",
+    warningLight: "#3A2A0A",
+
+    accent: "#A1A1AA",
+    accentLight: "#27272A",
+    gold: "#FBBF24",
+    goldLight: "#3A2A0A",
+
+    cardGlow: "transparent",
   },
 };
+
+// ── Spacing ───────────────────────────────────────────────────────────
+// Strict 4pt grid.
 
 export const Spacing = {
   xs: 4,
@@ -72,71 +113,99 @@ export const Spacing = {
   "3xl": 48,
   "4xl": 64,
   "5xl": 80,
-  inputHeight: 52,
-  buttonHeight: 52,
+  inputHeight: 48,
+  buttonHeight: 48,
 };
 
+// ── Radius ────────────────────────────────────────────────────────────
+// Tightened considerably. Oversized pill-shaped cards are the fastest way to
+// make an interface look templated.
+
 export const BorderRadius = {
-  xs: 8,
-  sm: 12,
-  md: 16,
-  lg: 20,
-  xl: 24,
-  "2xl": 32,
-  "3xl": 40,
+  xs: 6,
+  sm: 8,
+  md: 10,
+  lg: 14,
+  xl: 18,
+  "2xl": 24,
+  "3xl": 28,
   full: 9999,
 };
 
+// ── Type ──────────────────────────────────────────────────────────────
+// Optical tracking: the larger the text, the tighter the letter spacing.
+
 export const Typography = {
   hero: {
-    fontSize: 36,
-    fontWeight: "800" as const,
-    letterSpacing: -0.5,
+    fontSize: 30,
+    fontWeight: "700" as const,
+    letterSpacing: -0.7,
+    lineHeight: 36,
   },
   h1: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: "700" as const,
-    letterSpacing: -0.3,
+    letterSpacing: -0.5,
+    lineHeight: 30,
   },
   h2: {
-    fontSize: 20,
+    fontSize: 19,
     fontWeight: "600" as const,
-    letterSpacing: -0.2,
+    letterSpacing: -0.3,
+    lineHeight: 25,
   },
   h3: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: "600" as const,
+    letterSpacing: -0.2,
+    lineHeight: 22,
   },
   h4: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "600" as const,
+    letterSpacing: -0.1,
+    lineHeight: 19,
   },
   body: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "400" as const,
-    lineHeight: 24,
+    lineHeight: 22,
   },
   bodySmall: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "400" as const,
-    lineHeight: 20,
+    lineHeight: 19,
   },
   caption: {
     fontSize: 12,
     fontWeight: "500" as const,
+    lineHeight: 16,
   },
   small: {
     fontSize: 11,
     fontWeight: "400" as const,
+    lineHeight: 15,
   },
   button: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "600" as const,
-    letterSpacing: 0.2,
+    letterSpacing: -0.1,
   },
   link: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "500" as const,
+  },
+  /** Small all-caps label for section eyebrows. */
+  overline: {
+    fontSize: 11,
+    fontWeight: "600" as const,
+    letterSpacing: 0.8,
+  },
+  /** Tabular-ish figures for scores and counts. */
+  numeric: {
+    fontSize: 26,
+    fontWeight: "700" as const,
+    letterSpacing: -0.8,
   },
 };
 
@@ -156,38 +225,44 @@ export const Fonts = Platform.select({
   web: {
     sans: "Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     serif: "Georgia, 'Times New Roman', serif",
-    rounded: "'SF Pro Rounded', system-ui, sans-serif",
+    rounded: "system-ui, sans-serif",
     mono: "SFMono-Regular, Menlo, Monaco, Consolas, monospace",
   },
 });
 
-// Modern Gradients
+// ── Gradients ─────────────────────────────────────────────────────────
+// Deliberately near-flat. Kept as an export because several screens still
+// render LinearGradient fills; they now read as solid, intentional colour.
+
 export const Gradients = {
   light: {
-    primary: ["#007AFF", "#0056D2"] as const,
-    primarySoft: ["#E3F2FD", "#E1F5FE"] as const,
-    secondary: ["#66B2FF", "#007AFF"] as const,
-    accent: ["#FF9800", "#F57C00"] as const,
-    success: ["#10B981", "#059669"] as const,
-    background: ["#FAFAFA", "#F3F4F6"] as const,
-    card: ["#FFFFFF", "#FAFAFA"] as const,
-    premium: ["#FF9800", "#F57C00", "#E65100"] as const,
-    glass: ["rgba(255,255,255,0.9)", "rgba(255,255,255,0.7)"] as const,
+    primary: ["#18181B", "#1F1F23"] as const,
+    primarySoft: ["#F4F4F5", "#FAFAFA"] as const,
+    secondary: ["#3F3F46", "#52525B"] as const,
+    accent: ["#3F3F46", "#52525B"] as const,
+    success: ["#15803D", "#166534"] as const,
+    background: ["#FAFAFA", "#F4F4F5"] as const,
+    card: ["#FFFFFF", "#FFFFFF"] as const,
+    premium: ["#27272A", "#18181B"] as const,
+    glass: ["rgba(255,255,255,0.92)", "rgba(255,255,255,0.82)"] as const,
   },
   dark: {
-    primary: ["#4DAFFF", "#007AFF"] as const,
-    primarySoft: ["#1E1B4B", "#312E81"] as const,
-    secondary: ["#80C7FF", "#4DAFFF"] as const,
-    accent: ["#FFB74D", "#FF9800"] as const,
-    success: ["#34D399", "#10B981"] as const,
-    background: ["#0F0F1A", "#1A1A2E"] as const,
-    card: ["#1A1A2E", "#16162A"] as const,
-    premium: ["#FFB74D", "#FF9800", "#F57C00"] as const,
-    glass: ["rgba(26,26,46,0.9)", "rgba(26,26,46,0.7)"] as const,
+    primary: ["#4A4A55", "#3F3F46"] as const,
+    primarySoft: ["#1C1C20", "#141417"] as const,
+    secondary: ["#52525B", "#3F3F46"] as const,
+    accent: ["#52525B", "#3F3F46"] as const,
+    success: ["#15803D", "#14532D"] as const,
+    background: ["#09090B", "#141417"] as const,
+    card: ["#141417", "#141417"] as const,
+    premium: ["#27272A", "#1C1C20"] as const,
+    glass: ["rgba(20,20,23,0.92)", "rgba(20,20,23,0.82)"] as const,
   },
 };
 
-// Modern Shadows
+// ── Elevation ─────────────────────────────────────────────────────────
+// Shadows are a last resort here — surfaces are separated by borders and
+// background steps. What remains is barely-there, and neutral (never tinted).
+
 export const Shadows = {
   none: {
     shadowColor: "transparent",
@@ -199,64 +274,72 @@ export const Shadows = {
   small: {
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
     elevation: 1,
   },
   medium: {
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 5,
+    elevation: 2,
   },
   large: {
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 4,
   },
   xl: {
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.1,
-    shadowRadius: 24,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 20,
+    elevation: 6,
   },
+  // Previously coloured glows. Now neutral so nothing halos.
   glow: {
-    shadowColor: "#6366F1",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    elevation: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
   },
   glowSuccess: {
-    shadowColor: "#10B981",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    elevation: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
   },
 };
 
-// Animation Durations
+// ── Motion ────────────────────────────────────────────────────────────
+// Short and purposeful. The spring is damped enough not to wobble.
+
 export const Animations = {
-  instant: 100,
-  fast: 150,
-  normal: 250,
-  slow: 350,
-  verySlow: 500,
+  instant: 90,
+  fast: 140,
+  normal: 190,
+  slow: 260,
+  verySlow: 340,
   spring: {
-    damping: 15,
-    stiffness: 150,
-    mass: 0.5,
+    damping: 22,
+    stiffness: 220,
+    mass: 0.6,
   },
 };
 
-// Glassmorphism
 export const Glassmorphism = {
-  blur: 20,
-  opacity: 0.85,
-  borderOpacity: 0.15,
+  blur: 18,
+  opacity: 0.92,
+  borderOpacity: 0.08,
 };
+
+/** Standard press feedback — subtle, no scale bounce on plain rows. */
+export const PressedOpacity = 0.62;
+
+/** Thinnest rule the display can draw — used for dividers between rows. */
+export const Hairline = StyleSheet.hairlineWidth;

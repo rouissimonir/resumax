@@ -17,7 +17,11 @@ export type ThemedTextProps = TextProps & {
     | "caption"
     | "small"
     | "button"
-    | "link";
+    | "link"
+    | "overline"
+    | "numeric";
+  /** Common colour roles, so screens stop hand-rolling `{ color: … }`. */
+  tone?: "default" | "secondary" | "muted";
 };
 
 export function ThemedText({
@@ -25,6 +29,7 @@ export function ThemedText({
   lightColor,
   darkColor,
   type = "body",
+  tone = "default",
   ...rest
 }: ThemedTextProps) {
   const { theme, isDark } = useTheme();
@@ -32,6 +37,8 @@ export function ThemedText({
   const getColor = () => {
     if (isDark && darkColor) return darkColor;
     if (!isDark && lightColor) return lightColor;
+    if (tone === "secondary") return theme.textSecondary;
+    if (tone === "muted") return theme.textMuted;
     if (type === "link") return theme.link;
     return theme.text;
   };
@@ -60,6 +67,10 @@ export function ThemedText({
         return Typography.button;
       case "link":
         return Typography.link;
+      case "overline":
+        return Typography.overline;
+      case "numeric":
+        return Typography.numeric;
       default:
         return Typography.body;
     }

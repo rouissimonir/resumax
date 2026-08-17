@@ -15,6 +15,386 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
+import { BlurView } from "expo-blur";
+
+import { ScreenScrollView } from "@/components/ScreenScrollView";
+import { ThemedText } from "@/components/ThemedText";
+import { useTheme } from "@/hooks/useTheme";
+import { Spacing, BorderRadius, Typography, Gradients, Shadows } from "@/constants/theme";
+import { useResumes } from "@/contexts/ResumeContext";
+import { HistoryStackParamList } from "@/navigation/HistoryStackNavigator";
+import { resumeApi } from "@/services/resumeApi";
+import { RatingModal } from "@/components/RatingModal";
+
+type ResumeDetailRouteProp = RouteProp<HistoryStackParamList, "ResumeDetail">;
+type NavigationProp = NativeStackNavigationProp<HistoryStackParamList, "ResumeDetail">;
+
+// ─── Sub-components for the preview modal ────────────────────────────────────
+
+function PreviewHeader({ data, theme }: { data: any; theme: any }) {
+  const parts = [
+    data.header?.address,
+    data.header?.phone,
+    data.header?.email,
+    data.header?.linkedin,
+  ].filter(Boolean);
+
+  return (
+    <View style={previewStyles.headerBlock}>
+      <ThemedText style={previewStyles.candidateName}>
+        {data.header?.name || ""}
+      </ThemedText>
+      {parts.length > 0 && (
+        <ThemedText style={[previewStyles.contactLine, { color: theme.textSecondary }]}>
+          {parts.join("  ·  ")}
+        </ThemedText>
+      )}
+      <View style={[previewStyles.headerRule, { backgroundColor: theme.border }]} />
+    </View>
+  );
+}
+
+function SectionHeading({ title, theme }: { title: string; theme: any }) {
+  return (
+    <View style={previewStyles.sectionHeadingRow}>
+      <ThemedText style={[previewStyles.sectionHeadingText, { color: theme.primary }]}>
+        {title}
+      </ThemedText>
+      <View style={[previewStyles.sectionRule, { backgroundColor: theme.primary + "40" }]} />
+    </View>
+  );
+}
+
+function ExperienceEntry({ exp, theme }: { exp: any; theme: any }) {
+  return (
+    <View style={previewStyles.entry}>
+      <View style={previewStyles.entryTopRow}>
+        <ThemedText style={[previewStyles.entryTitle, { color: theme.text }]} numberOfLines={1}>
+          {exp.role}
+        </ThemedText>
+        <ThemedText style={[previewStyles.entryDate, { color: theme.textSecondary }]}>
+          {exp.date}
+        </ThemedText>
+      </View>
+      <ThemedText style={[previewStyles.entrySubtitle, { color: theme.textSecondary }]}>
+        {[exp.company, exp.location].filter(Boolean).join("  ·  ")}
+      </ThemedText>
+      {(exp.bullets || []).map((bullet: string, i: number) => (
+        <View key={i} style={previewStyles.bulletRow}>
+          <View style={[previewStyles.bulletDot, { backgroundColor: theme.primary }]} />
+          <ThemedText style={[previewStyles.bulletText, { color: theme.text }]}>
+            {bullet}
+          </ThemedText>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function EducationEntry({ edu, theme }: { edu: any; theme: any }) {
+  return (
+    <View style={previewStyles.entry}>
+      <View style={previewStyles.entryTopRow}>
+        <ThemedText style={[previewStyles.entryTitle, { color: theme.text }]} numberOfLines={2}>
+          {edu.school}
+        </ThemedText>
+        <ThemedText style={[previewStyles.entryDate, { color: theme.textSecondary }]}>
+          {edu.date}
+        </ThemedText>
+      </View>
+      <ThemedText style={[previewStyles.entrySubtitle, { color: theme.textSecondary }]}>
+        {[edu.degree, edu.location].filter(Boolean).join("  ·  ")}
+      </ThemedText>
+      {(edu.bullets || []).map((bullet: string, i: number) => (
+        <View key={i} style={previewStyles.bulletRow}>
+          <View style={[previewStyles.bulletDot, { backgroundColor: theme.primary }]} />
+          <ThemedText style={[previewStyles.bulletText, { color: theme.text }]}>
+            {bullet}
+          </ThemedText>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// ─── Main screen ─────────────────────────────────────────────────────────────
+
+export default function ResumeDetailScreen() {
+  const { theme, colorScheme, isDark } = useTheme();
+  const route = useRoute<ResumeDetailRouteProp>();
+  const navigation = useNavigation<NavigationProp>();
+  const { getResumeById } = useResumes();
+  const insets = useSafeAreaInsets();
+
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+  const [showRatingPrompt, setShowRatingPrompt] = useState(false);
+
+  const resume = getResumeById(route.params.resumeId);
+
+  if (!resume) {
+    return (
+      <ScreenScrollView>
+        <View style={styles.container}>
+          <ThemedText>Resume not found</ThemedText>
+        </View>
+      </ScreenScrollView>
+    );
+  }
+
+  const handleDownload = async () => {
+    try {
+      setIsDownloading(true);
+      const downloadUrl = resumeApi.getDownloadUrl(resume.id);
+
+      if (Platform.OS === "web") {
+        window.open(downloadUrl, "_blank");
+        return;
+      }
+
+      const fileUri = FileSystem.documentDirectory + "CV.pdf";
+      const downloadResumable = FileSystem.createDownloadResumable(downloadUrl, fileUri);
+      const result = await downloadResumable.downloadAsync();
+
+      if (!result || result.status !== 200) throw new Error("Download failed");
+
+      setTimeout(() => setShowRatingPrompt(true), 2000);
+
+      if (Platform.OS === "android") {
+        try {
+          const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+          if (permissions.granted) {
+            const base64 = await FileSystem.readAsStringAsync(result.uri, { encoding: FileSystem.EncodingType.Base64 });
+            const newFileUri = await FileSystem.StorageAccessFramework.createFileAsync(permissions.directoryUri, "CV.pdf", "application/pdf");
+            await FileSystem.writeAsStringAsync(newFileUri, base64, { encoding: FileSystem.EncodingType.Base64 });
+            Alert.alert("Saved", "CV saved to selected folder");
+          }
+        } catch {
+          /* fallthrough */
+        }
+      }
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(result.uri, { mimeType: "application/pdf", UTI: "com.adobe.pdf", dialogTitle: "Open CV with..." });
+      }
+    } catch (error: any) {
+      Alert.alert("Error", error.message || "Failed to download PDF");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handleShare = async () => {
+    try {
+      const downloadUrl = resumeApi.getDownloadUrl(resume.id);
+      if (Platform.OS === "web") {
+        if (navigator.share) await navigator.share({ title: "My CV", url: downloadUrl });
+        return;
+      }
+      const fileUri = FileSystem.documentDirectory + "CV.pdf";
+      const { uri } = (await FileSystem.createDownloadResumable(downloadUrl, fileUri).downloadAsync()) ?? {};
+      if (uri && (await Sharing.isAvailableAsync())) {
+        await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: "Share CV" });
+      }
+    } catch {
+      Alert.alert("Error", "Failed to share resume");
+    }
+  };
+
+  React.useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <Pressable onPress={handleShare} style={styles.headerButton}>
+          <Feather name="share-2" size={24} color={theme.primary} />
+        </Pressable>
+      ),
+    });
+  }, [navigation, theme]);
+
+  // Parse resume data once
+  let resumeData: any = null;
+  try {
+    resumeData = typeof resume.improvedText === "string"
+      ? JSON.parse(resume.improvedText)
+      : resume.improvedText;
+  } catch {
+    resumeData = null;
+  }
+
+  return (
+    <>
+      <ScreenScrollView>
+        <View style={styles.container}>
+          {/* Info card */}
+          <View style={[styles.infoCard, { backgroundColor: theme.backgroundDefault, borderColor: theme.border }]}>
+            <View style={styles.infoRow}>
+              <View style={[styles.infoIcon, { backgroundColor: theme.primary + "15" }]}>
+                <Feather name="file-text" size={20} color={theme.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <ThemedText style={Typography.body} numberOfLines={1}>{resume.originalFilename}</ThemedText>
+                <ThemedText style={[Typography.caption, { color: theme.textSecondary }]}>
+                  {resume.dateProcessed.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}
+                </ThemedText>
+              </View>
+              <View style={[styles.statusPill, { backgroundColor: theme.successLight }]}>
+                <Feather name="check-circle" size={12} color={theme.success} />
+                <ThemedText style={[Typography.small, { color: theme.success, marginLeft: 4 }]}>Ready</ThemedText>
+              </View>
+            </View>
+          </View>
+
+          {/* Preview card */}
+          {resumeData && (
+            <Pressable
+              style={({ pressed }) => [
+                styles.previewCard,
+                { backgroundColor: theme.backgroundDefault, borderColor: theme.border },
+                pressed && { opacity: 0.9 },
+              ]}
+              onPress={() => setShowPreview(true)}
+            >
+              {/* Simulated CV thumbnail */}
+              <View style={[styles.cvThumbnail, { backgroundColor: theme.backgroundSecondary }]}>
+                <View style={styles.thumbNameLine}>
+                  <View style={[styles.thumbBar, { width: "55%", backgroundColor: theme.text, height: 8 }]} />
+                </View>
+                <View style={[styles.thumbBar, { width: "70%", backgroundColor: theme.textMuted, height: 4, marginBottom: 10 }]} />
+                {[["80%", "40%"], ["65%", "50%"], ["72%", "35%"]].map(([w1, w2], i) => (
+                  <View key={i} style={styles.thumbLine}>
+                    <View style={[styles.thumbBar, { width: w1, backgroundColor: theme.textSecondary, height: 3 }]} />
+                    <View style={[styles.thumbBar, { width: w2, backgroundColor: theme.textMuted, height: 3 }]} />
+                  </View>
+                ))}
+                <View style={[styles.thumbDivider, { backgroundColor: theme.border }]} />
+                {["90%", "75%", "60%", "80%"].map((w, i) => (
+                  <View key={i} style={[styles.thumbBar, { width: w, backgroundColor: theme.textMuted, height: 3, marginBottom: 5 }]} />
+                ))}
+              </View>
+
+              <View style={styles.previewCardFooter}>
+                <View style={[styles.previewEyeIcon, { backgroundColor: theme.primary + "15" }]}>
+                  <Feather name="eye" size={18} color={theme.primary} />
+                </View>
+                <View style={{ flex: 1, marginLeft: Spacing.md }}>
+                  <ThemedText style={Typography.h4}>Preview Content</ThemedText>
+                  <ThemedText style={[Typography.caption, { color: theme.textSecondary }]}>
+                    Tap to review your improved CV
+                  </ThemedText>
+                </View>
+                <Feather name="chevron-right" size={20} color={theme.textSecondary} />
+              </View>
+            </Pressable>
+          )}
+
+          <View style={{ height: 100 }} />
+        </View>
+      </ScreenScrollView>
+
+      {/* Download button */}
+      <View style={[styles.downloadContainer, { paddingBottom: insets.bottom + Spacing.lg, backgroundColor: theme.backgroundDefault, borderTopColor: theme.border }]}>
+        <Pressable
+          style={({ pressed }) => [
+            styles.downloadButton,
+            pressed && { opacity: 0.9, transform: [{ scale: 0.98 }] },
+          ]}
+          onPress={handleDownload}
+          disabled={isDownloading}
+        >
+          <LinearGradient
+            colors={colorScheme === "dark" ? Gradients.dark.primary : Gradients.light.primary}
+            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+            style={styles.downloadGradient}
+          >
+            <Feather name={isDownloading ? "loader" : "download"} size={20} color="#FFF" />
+            <ThemedText style={[Typography.button, { color: "#FFF", marginLeft: Spacing.sm }]}>
+              {isDownloading ? "Downloading..." : "Download PDF"}
+            </ThemedText>
+          </LinearGradient>
+        </Pressable>
+      </View>
+
+      <RatingModal visible={showRatingPrompt} onClose={() => setShowRatingPrompt(false)} />
+
+      {/* ── Preview Modal ─────────────────────────────────────────── */}
+      <Modal visible={showPreview} animationType="slide" presentationStyle="pageSheet">
+        <View style={[styles.modalRoot, { backgroundColor: theme.backgroundRoot }]}>
+          {/* Modal header */}
+          <View style={[styles.modalHeader, { borderBottomColor: theme.border, backgroundColor: theme.backgroundDefault }]}>
+            <View style={styles.modalHandleBar} />
+            <View style={styles.modalHeaderRow}>
+              <ThemedText style={Typography.h3}>CV Preview</ThemedText>
+              <Pressable
+                onPress={() => setShowPreview(false)}
+                style={[styles.closeBtn, { backgroundColor: theme.backgroundSecondary }]}
+              >
+                <Feather name="x" size={18} color={theme.text} />
+              </Pressable>
+            </View>
+          </View>
+
+          {/* Modal content */}
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.modalScrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {resumeData ? (
+              <View style={[styles.cvPaper, { backgroundColor: theme.backgroundDefault, borderColor: theme.border }]}>
+                <PreviewHeader data={resumeData} theme={theme} />
+
+                {Array.isArray(resumeData.experience) && resumeData.experience.length > 0 && (
+                  <View style={previewStyles.section}>
+                    <SectionHeading title="EXPERIENCE" theme={theme} />
+                    {resumeData.experience.map((exp: any, i: number) => (
+                      <ExperienceEntry key={i} exp={exp} theme={theme} />
+                    ))}
+                  </View>
+                )}
+
+                {Array.isArray(resumeData.education) && resumeData.education.length > 0 && (
+                  <View style={previewStyles.section}>
+                    <SectionHeading title="EDUCATION" theme={theme} />
+                    {resumeData.education.map((edu: any, i: number) => (
+                      <EducationEntry key={i} edu={edu} theme={theme} />
+                    ))}
+                  </View>
+                )}
+
+                {resumeData.skills && (
+                  <View style={previewStyles.section}>
+                    <SectionHeading title="SKILLS" theme={theme} />
+                    <ThemedText style={[previewStyles.skillsText, { color: theme.text }]}>
+                      {typeof resumeData.skills === "string"
+                        ? resumeData.skills
+                        : Array.isArray(resumeData.skills)
+                          ? resumeData.skills.join(", ")
+                          : ""}
+                    </ThemedText>
+                  </View>
+                )}
+              </View>
+            ) : (
+              <View style={styles.parseError}>
+                <Feather name="alert-circle" size={40} color={theme.textMuted} />
+                <ThemedText style={[Typography.body, { color: theme.textSecondary, marginTop: Spacing.md, textAlign: "center" }]}>
+                  Preview unavailable. Download the PDF to view your CV.
+                </ThemedText>
+              </View>
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
+    </>
+  );
+}
+import { Feather } from "@expo/vector-icons";
+import { RouteProp, useRoute, useNavigation } from "@react-navigation/native";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ScreenScrollView } from "@/components/ScreenScrollView";
 import { ThemedText } from "@/components/ThemedText";

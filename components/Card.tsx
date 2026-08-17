@@ -1,14 +1,27 @@
 import React from "react";
-import { StyleSheet, ViewStyle, Pressable, Animated } from "react-native";
+import { StyleSheet, ViewStyle, Pressable } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { useTheme } from "@/hooks/useTheme";
-import { Spacing, BorderRadius, Shadows } from "@/constants/theme";
+import {
+  Spacing,
+  BorderRadius,
+  Shadows,
+  PressedOpacity,
+} from "@/constants/theme";
 
 interface CardProps {
   children: React.ReactNode;
   style?: ViewStyle;
   onPress?: () => void;
-  variant?: "default" | "elevated" | "outlined";
+  /**
+   * `default`  — bordered surface, the workhorse.
+   * `elevated` — very slight lift, for things that float above content.
+   * `outlined` — same as default; kept for source compatibility.
+   * `flat`     — no border, just a tinted background block.
+   */
+  variant?: "default" | "elevated" | "outlined" | "flat";
+  /** Remove the built-in padding when the content manages its own. */
+  bare?: boolean;
 }
 
 export function Card({
@@ -16,24 +29,34 @@ export function Card({
   style,
   onPress,
   variant = "default",
+  bare = false,
 }: CardProps) {
   const { theme } = useTheme();
 
-  const getVariantStyle = () => {
+  const variantStyle: ViewStyle = (() => {
     switch (variant) {
       case "elevated":
-        return { ...Shadows.medium, borderWidth: 0 };
-      case "outlined":
-        return { borderWidth: 1, borderColor: theme.border };
+        return {
+          backgroundColor: theme.backgroundDefault,
+          borderWidth: 1,
+          borderColor: theme.border,
+          ...Shadows.medium,
+        };
+      case "flat":
+        return { backgroundColor: theme.backgroundSecondary };
       default:
-        return { borderWidth: 1, borderColor: theme.borderLight };
+        return {
+          backgroundColor: theme.backgroundDefault,
+          borderWidth: 1,
+          borderColor: theme.border,
+        };
     }
-  };
+  })();
 
   const cardStyle = [
     styles.card,
-    { backgroundColor: theme.backgroundDefault },
-    getVariantStyle(),
+    !bare && styles.padded,
+    variantStyle,
     style,
   ];
 
@@ -41,7 +64,10 @@ export function Card({
     return (
       <Pressable
         onPress={onPress}
-        style={({ pressed }) => [cardStyle, pressed && styles.pressed]}
+        style={({ pressed }) => [
+          cardStyle,
+          pressed && { opacity: PressedOpacity },
+        ]}
       >
         {children}
       </Pressable>
@@ -53,11 +79,10 @@ export function Card({
 
 const styles = StyleSheet.create({
   card: {
-    padding: Spacing.lg,
     borderRadius: BorderRadius.lg,
+    overflow: "hidden",
   },
-  pressed: {
-    opacity: 0.9,
-    transform: [{ scale: 0.99 }],
+  padded: {
+    padding: Spacing.lg,
   },
 });

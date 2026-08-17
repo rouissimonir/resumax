@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   StyleSheet,
   View,
@@ -21,6 +21,8 @@ import Animated, {
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useUser } from "@/contexts/UserContext";
+import CvPreferencesForm from "@/components/CvPreferencesForm";
+import { resumeApi } from "@/services/resumeApi";
 
 import { Image } from "react-native";
 const slides = [
@@ -144,6 +146,30 @@ const Paginator = ({ data, scrollX }: { data: any[]; scrollX: any }) => {
 
 export default function OnboardingScreen() {
   const { completeOnboarding } = useUser();
+  // The questions are a second phase rather than extra carousel pages: a
+  // paging FlatList swallows the horizontal drags that chips and a text input
+  // need, and mixing the two makes both feel broken.
+  const [showQuestions, setShowQuestions] = useState(false);
+  const [templates, setTemplates] = useState<
+    { id: string; name: string; badge?: string | null }[]
+  >([]);
+
+  useEffect(() => {
+    // Best-effort: if the backend is unreachable the format question is simply
+    // hidden and the rest of onboarding still works.
+    resumeApi
+      .getTemplates()
+      .then((list: any) =>
+        setTemplates(
+          (Array.isArray(list) ? list : list?.templates || []).map((t: any) => ({
+            id: t.id,
+            name: t.name,
+            badge: t.badge ?? null,
+          })),
+        ),
+      )
+      .catch(() => setTemplates([]));
+  }, []);
   const { width } = useWindowDimensions();
   const [currentIndex, setCurrentIndex] = useState(0);
   const scrollX = useSharedValue(0);
@@ -170,9 +196,64 @@ export default function OnboardingScreen() {
         animated: true,
       });
     } else {
-      completeOnboarding();
+      setShowQuestions(true);
     }
   };
+
+  if (showQuestions) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar style="light" />
+        <LinearGradient
+          colors={["#1A202C", "#2D3748", "#4A5568"]}
+          style={StyleSheet.absoluteFillObject}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        />
+
+        <View style={styles.questionsHeader}>
+          <Text style={styles.questionsTitle}>Set up your CVs</Text>
+          <Text style={styles.questionsSubtitle}>
+            All optional — everything here can be changed later in your profile.
+          </Text>
+        </View>
+
+        <View style={styles.questionsBody}>
+          <CvPreferencesForm dark templates={templates} />
+        </View>
+
+        <View style={styles.footer}>
+          <TouchableOpacity
+            style={styles.button}
+            onPress={completeOnboarding}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={["#6366F1", "#4F46E5"]}
+              style={styles.buttonGradient}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+            >
+              <Text style={styles.buttonText}>Done</Text>
+              <Ionicons
+                name="arrow-forward"
+                size={20}
+                color="#E2E8F0"
+                style={{ marginLeft: 8 }}
+              />
+            </LinearGradient>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={completeOnboarding}
+            style={styles.skipButton}
+          >
+            <Text style={styles.skipText}>Skip for now</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -250,6 +331,15 @@ export default function OnboardingScreen() {
 }
 
 const styles = StyleSheet.create({
+  questionsHeader: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 8 },
+  questionsTitle: { fontSize: 26, fontWeight: "800", color: "#F7FAFC" },
+  questionsSubtitle: {
+    fontSize: 14,
+    color: "#A0AEC0",
+    marginTop: 6,
+    lineHeight: 20,
+  },
+  questionsBody: { flex: 1, paddingHorizontal: 24, paddingTop: 12 },
   container: {
     flex: 1,
     justifyContent: "center",

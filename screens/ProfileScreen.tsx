@@ -21,6 +21,8 @@ import { useTheme } from "@/hooks/useTheme";
 import { useColorScheme } from "@/hooks/useColorScheme";
 // CreditsContext removed
 import { useRevenueCat } from "@/contexts/RevenueCatContext";
+import CvPreferencesForm from "@/components/CvPreferencesForm";
+import { resumeApi } from "@/services/resumeApi";
 import {
   Spacing,
   BorderRadius,
@@ -32,6 +34,27 @@ import {
 import { useUser } from "@/contexts/UserContext";
 
 export default function ProfileScreen() {
+  const [cvTemplates, setCvTemplates] = useState<
+    { id: string; name: string; badge?: string | null }[]
+  >([]);
+
+  useEffect(() => {
+    // Best-effort. If it fails the format question is hidden and every other
+    // preference still works.
+    resumeApi
+      .getTemplates()
+      .then((data: any) =>
+        setCvTemplates(
+          (data?.templates || []).map((t: any) => ({
+            id: t.id,
+            name: t.name,
+            badge: t.badge ?? null,
+          })),
+        ),
+      )
+      .catch(() => setCvTemplates([]));
+  }, []);
+
   const { theme, isDark, colorScheme } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<ProfileStackParamList>>();
   const { isPro } = useRevenueCat();
@@ -226,6 +249,30 @@ export default function ProfileScreen() {
             />
           </View>
         )}
+
+        {/* CV Preferences — same component onboarding uses, so the two can't
+            present different options or wording. */}
+        <View style={styles.section}>
+          <ThemedText style={[Typography.h3, styles.sectionTitle]}>
+            CV Preferences
+          </ThemedText>
+          <View
+            style={[
+              styles.settingCard,
+              {
+                backgroundColor: theme.backgroundDefault,
+                borderColor: theme.border,
+                padding: Spacing.md,
+              },
+            ]}
+          >
+            <CvPreferencesForm
+              dark={colorScheme === "dark"}
+              templates={cvTemplates}
+              scroll={false}
+            />
+          </View>
+        </View>
 
         {/* Settings Section */}
         <View style={styles.section}>

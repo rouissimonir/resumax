@@ -20,7 +20,7 @@ load_dotenv()
 
 from services.pdf_service import extract_text_from_pdf, generate_improved_pdf
 from services.ai_service import improve_resume_text
-from services.templates import list_templates, get_template
+from services.templates import list_templates
 
 # Configure logging with explicit stream handler to ensure console output
 logging.basicConfig(
@@ -38,12 +38,12 @@ logger = logging.getLogger(__name__)
 logger.info("=" * 80)
 logger.info("BACKEND STARTUP - ENVIRONMENT CHECK")
 logger.info("=" * 80)
-api_key = os.getenv("GEMINI_API_KEY", "")
+api_key = os.getenv("GROQ_API_KEY", "")
 model = os.getenv("LLM_MODEL", "")
 if api_key:
-    logger.info(f"✓ GEMINI_API_KEY loaded: {api_key[:10]}...{api_key[-5:]}")
+    logger.info(f"✓ GROQ_API_KEY loaded: {api_key[:10]}...{api_key[-5:]}")
 else:
-    logger.error("✗ GEMINI_API_KEY NOT FOUND!")
+    logger.error("✗ GROQ_API_KEY NOT FOUND!")
 if model:
     logger.info(f"✓ LLM_MODEL: {model}")
 else:
@@ -68,6 +68,124 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Progress tracking
 progress_store = {}
+
+# ── Auto-cleanup: delete files older than 1 hour to prevent disk fill ──────────
+def cleanup_old_files(directory: str, max_age_seconds: int = 3600):
+    """Delete files older than max_age_seconds from directory."""
+    import time
+    now = time.time()
+    deleted = 0
+    try:
+        for fname in os.listdir(directory):
+            fpath = os.path.join(directory, fname)
+            if os.path.isfile(fpath):
+                age = now - os.path.getmtime(fpath)
+                if age > max_age_seconds:
+                    os.remove(fpath)
+                    deleted += 1
+        if deleted:
+            logger.info(f"Auto-cleanup: removed {deleted} old file(s) from {directory}")
+    except Exception as e:
+        logger.warning(f"Auto-cleanup error in {directory}: {e}")
+
+def cleanup_after_request(file_id: str):
+    """
+    Drop the bulky intermediates for a job, immediately after it completes.
+
+    Deliberately KEEPS two things:
+
+      {file_id}_debug.json  — the extracted CV. /api/generate-pdf reloads this
+                              to render, so deleting it here made every download
+                              fail with "Resume data not found. Please upload
+                              again." It is also what makes switching to another
+                              format without re-running the AI possible.
+      {file_id}_photo.jpg   — same reason: needed to re-render.
+
+    Both are still bounded by cleanup_old_files()'s one-hour sweep, so this does
+    not reintroduce unbounded growth.
+    """
+    targets = [
+        os.path.join(UPLOAD_DIR, f"{file_id}_original.pdf"),
+        os.path.join(OUTPUT_DIR, f"{file_id}_ocr_result.txt"),
+        os.path.join(OUTPUT_DIR, f"{file_id}_improvements.txt"),
+    ]
+    for path in targets:
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception as e:
+            logger.warning(f"Could not delete temp file {path}: {e}")
+
+
+# ── Photo handling ────────────────────────────────────────────────────────
+MAX_PHOTO_BYTES = 8 * 1024 * 1024
+PHOTO_BOX = (450, 600)          # fixed 3:4 so renderers never do aspect math
+
+
+def _blank_to_none(value):
+    """Multipart form fields arrive as "" rather than absent when unset."""
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value or None
+
+
+def _language_pref(value):
+    """"auto" (or unset) means the model decides; anything else is a hard override."""
+    value = _blank_to_none(value)
+    if value is None or value.lower() == "auto":
+        return None
+    return value.lower()
+
+
+def photo_path_for(file_id: str):
+    """Path of this job's photo, or None if it has none."""
+    path = os.path.join(UPLOAD_DIR, f"{file_id}_photo.jpg")
+    return path if os.path.exists(path) else None
+
+
+def save_photo(file_id: str, raw: bytes) -> str:
+    """
+    Normalise an uploaded headshot to a predictable JPEG.
+
+    Every step here is load-bearing:
+      · verify()          rejects non-images before we decode anything
+      · exif_transpose()  iOS stores portrait photos rotated with an EXIF flag
+                          that PDF renderers ignore — without this, every
+                          iPhone headshot comes out sideways
+      · alpha flatten     transparent PNGs would otherwise render black
+      · fit() to 3:4      the renderer can then use one constant image box,
+                          biased slightly upward to favour the face
+    """
+    from PIL import Image, ImageOps, UnidentifiedImageError
+    import io
+
+    if len(raw) > MAX_PHOTO_BYTES:
+        raise HTTPException(status_code=400, detail="Photo too large (max 8 MB)")
+
+    try:
+        Image.open(io.BytesIO(raw)).verify()
+        img = Image.open(io.BytesIO(raw))
+    except (UnidentifiedImageError, OSError):
+        raise HTTPException(status_code=400, detail="That file is not a readable image")
+
+    img = ImageOps.exif_transpose(img)
+
+    if img.mode in ("RGBA", "LA", "P"):
+        rgba = img.convert("RGBA")
+        flat = Image.new("RGB", rgba.size, (255, 255, 255))
+        flat.paste(rgba, mask=rgba.split()[-1])
+        img = flat
+    else:
+        img = img.convert("RGB")
+
+    img = ImageOps.fit(img, PHOTO_BOX, Image.LANCZOS, centering=(0.5, 0.35))
+
+    path = os.path.join(UPLOAD_DIR, f"{file_id}_photo.jpg")
+    img.save(path, "JPEG", quality=88, optimize=True)
+    logger.info(f"Photo saved for {file_id}: {path}")
+    return path
+# ──────────────────────────────────────────────────────────────────────────────
 
 from fastapi.staticfiles import StaticFiles
 
@@ -104,10 +222,25 @@ async def get_progress(file_id: str):
 @app.post("/api/upload-resume")
 async def upload_resume(
     file: UploadFile = File(...),
-    template_id: str = Form(default="professional")
+    template_id: str = Form(default="professional"),
+    # Saved user preferences, sent by the client on every upload. All optional:
+    # an account that skipped onboarding sends nothing and gets the previous
+    # behaviour exactly. "auto" for language means "let the model decide".
+    language: str = Form(default=None),
+    target_role: str = Form(default=None),
+    experience_level: str = Form(default=None),
+    # Optional headshot, for formats where a photo is conventional. Accepted
+    # here as well as on /api/upload-photo because file_id does not exist until
+    # this call returns, and /api/generate-pdf is Pro-gated — a free user
+    # choosing Europass must still see their photo in this first render.
+    photo: UploadFile = File(None),
 ):
     logger.info(f"Upload resume request received. Filename: {file.filename}, Template: {template_id}")
     
+    # Prune files older than 1 hour from both directories before accepting new upload
+    cleanup_old_files(UPLOAD_DIR)
+    cleanup_old_files(OUTPUT_DIR)
+
     if not file.filename or not file.filename.lower().endswith('.pdf'):
         logger.warning(f"Invalid file format: {file.filename}")
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
@@ -130,6 +263,15 @@ async def upload_resume(
         with open(original_path, "wb") as f:
             f.write(contents)
         logger.info(f"File saved successfully. Size: {len(contents)} bytes")
+
+        # A bad photo must never sink an otherwise good resume upload.
+        if photo is not None and photo.filename:
+            try:
+                save_photo(file_id, await photo.read())
+            except HTTPException as e:
+                logger.warning(f"Photo rejected for {file_id}: {e.detail}")
+            except Exception as e:
+                logger.warning(f"Photo processing failed for {file_id}: {e}")
         
         progress_store[file_id] = {
             "stage": "uploaded",
@@ -177,7 +319,12 @@ async def upload_resume(
         }
         
         # improved_data is now a dict (JSON)
-        improved_data = await improve_resume_text(original_text, file_id, template_id)
+        improved_data = await improve_resume_text(
+            original_text, file_id, template_id,
+            target_role=_blank_to_none(target_role),
+            experience_level=_blank_to_none(experience_level),
+            language=_language_pref(language),
+        )
         
         logger.info("=" * 80)
         logger.info("✓ AI improvement complete")
@@ -205,12 +352,16 @@ async def upload_resume(
         improved_path = os.path.join(OUTPUT_DIR, f"{file_id}_improved.pdf")
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(
-            executor, generate_improved_pdf, improved_data, improved_path, template_id
+            executor, generate_improved_pdf, improved_data, improved_path,
+            template_id, photo_path_for(file_id),
         )
-        
+
         logger.info(f"✓ PDF generated successfully: {improved_path}")
         logger.info("=" * 80)
-        
+
+        # Delete temp files for this job — only keep the final PDF
+        cleanup_after_request(file_id)
+
         progress_store[file_id] = {
             "stage": "complete",
             "message": "Your resume is ready!",
@@ -223,7 +374,13 @@ async def upload_resume(
             "timestamp": timestamp,
             "original_text": original_text,
             "improved_data": improved_data,
-            "download_url": f"/api/download/{file_id}"
+            "download_url": f"/api/download/{file_id}",
+            "template_id": template_id,
+            "has_photo": photo_path_for(file_id) is not None,
+            # The language the headings were rendered in. Returned so the app
+            # can tell the user when their CV is in a language we have no
+            # heading table for and English was used instead.
+            "language": improved_data.get("language"),
         }
     
     except Exception as e:
@@ -247,6 +404,20 @@ async def download_resume(file_id: str):
         raise HTTPException(status_code=404, detail="File not found")
     
     logger.info(f"Serving file: {file_path}")
+    
+    # Schedule deletion after serving — keep disk clean
+    async def delete_after_response():
+        import asyncio
+        await asyncio.sleep(30)  # 30s grace period in case of retries
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info(f"Auto-deleted served PDF: {file_path}")
+        except Exception as e:
+            logger.warning(f"Could not auto-delete {file_path}: {e}")
+
+    asyncio.create_task(delete_after_response())
+
     return FileResponse(
         file_path,
         media_type="application/pdf",
@@ -287,14 +458,38 @@ async def generate_pdf(request: GeneratePDFRequest):
     with open(debug_path, "r", encoding="utf-8") as f:
         improved_data = json.load(f)
         
-    # 3. Generate PDF
+    # 3. Generate PDF. The photo is stored per file_id, independent of format —
+    #    the renderer decides whether to use it, so switching Europass -> US ->
+    #    Europass simply hides and re-shows it with no state to manage.
     improved_path = os.path.join(OUTPUT_DIR, f"{request.file_id}_improved.pdf")
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
-        executor, generate_improved_pdf, improved_data, improved_path, request.template_id
+        executor, generate_improved_pdf, improved_data, improved_path,
+        request.template_id, photo_path_for(request.file_id),
     )
-    
+
     return {
         "status": "success",
         "download_url": f"/api/download/{request.file_id}"
     }
+
+
+@app.post("/api/upload-photo")
+async def upload_photo(file_id: str = Form(...), photo: UploadFile = File(...)):
+    """Attach or replace the headshot for an existing job."""
+    if not os.path.exists(os.path.join(OUTPUT_DIR, f"{file_id}_debug.json")):
+        raise HTTPException(status_code=404, detail="Resume data not found. Please upload again.")
+    save_photo(file_id, await photo.read())
+    return {"status": "success", "has_photo": True}
+
+
+@app.delete("/api/photo/{file_id}")
+async def delete_photo(file_id: str):
+    """Remove the headshot. Idempotent."""
+    path = os.path.join(UPLOAD_DIR, f"{file_id}_photo.jpg")
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception as e:
+            logger.warning(f"Could not delete photo {path}: {e}")
+    return {"status": "success", "has_photo": False}

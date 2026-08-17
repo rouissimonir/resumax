@@ -4,12 +4,12 @@ python-multipart
 paddlepaddle
 paddleocr
 pdf2image
+pillow
 google-generativeai
-fpdf
+fpdf2>=2.8
 numpy
 opencv-python-headless
 pytesseract
 PyPDF2
-reportlab
 json_repair
 dotenv

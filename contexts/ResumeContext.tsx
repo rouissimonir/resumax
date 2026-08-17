@@ -8,6 +8,15 @@ export type Resume = {
   dateProcessed: Date;
   status: "processing" | "completed" | "error";
   downloadUrl?: string;
+  /**
+   * The format this resume was generated with. Without it, the Preview screen
+   * had nothing to send to generatePdf() and every download silently fell back
+   * to the Harvard template — so picking "Executive Bold" then downloading gave
+   * you a Harvard CV.
+   */
+  templateId: string;
+  /** Whether a headshot is stored server-side for this job. */
+  hasPhoto?: boolean;
 };
 
 type ResumeContextType = {

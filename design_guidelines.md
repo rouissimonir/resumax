@@ -149,27 +149,94 @@ Tab bar positioning:
 ## Design System
 
 ### Color Palette
-**Primary:** Professional Blue
-- Primary: #2563EB (Modern, trustworthy blue)
-- Primary Light: #60A5FA
-- Primary Dark: #1E40AF
 
-**Neutrals:**
-- Background Light: #F9FAFB
-- Background Dark: #111827
-- Surface Light: #FFFFFF
-- Surface Dark: #1F2937
-- Text Primary Light: #111827
-- Text Primary Dark: #F9FAFB
-- Text Secondary Light: #6B7280
-- Text Secondary Dark: #9CA3AF
-- Border Light: #E5E7EB
-- Border Dark: #374151
+> Source of truth is `constants/theme.ts`. This section mirrors it — if the two
+> disagree, the code wins and this file is the thing to fix.
 
-**Semantic:**
-- Success: #10B981 (processing complete)
-- Error: #EF4444 (upload/processing errors)
-- Warning: #F59E0B (file size warnings)
+**Principle: neutral-first.** A zinc ramp carries the whole interface. Colour is
+used to *mean* something (success, error, warning) and never for decoration.
+There is deliberately no second brand colour competing for attention — which is
+why the brand mark below is monochrome.
+
+**Primary** — a deep near-black used for solid fills and emphasis. White text
+sits on it legibly in both schemes.
+
+| Token | Light | Dark |
+|---|---|---|
+| `primary` | `#18181B` | `#4A4A55` |
+| `primaryLight` | `#3F3F46` | `#71717A` |
+| `primaryDark` | `#09090B` | `#27272A` |
+
+**Neutrals**
+
+| Token | Light | Dark |
+|---|---|---|
+| `text` | `#09090B` | `#FAFAFA` |
+| `textSecondary` | `#52525B` | `#A1A1AA` |
+| `textMuted` | `#71717A` (4.8:1 on white) | `#7E7E88` (4.6:1 on card) |
+| `backgroundRoot` | `#FAFAFA` | `#09090B` |
+| `backgroundDefault` | `#FFFFFF` | `#141417` |
+| `backgroundSecondary` | `#F4F4F5` | `#1C1C20` |
+| `border` | `#E4E4E7` | — |
+
+**Semantic** — muted and print-like, never neon.
+
+| Token | Light |
+|---|---|
+| `success` / `successLight` | `#15803D` / `#DCFCE7` |
+| `error` / `errorLight` | `#B91C1C` / `#FEE2E2` |
+| `warning` / `warningLight` | `#B45309` / `#FEF3C7` |
+
+Structure comes from hairline borders and background layers, not from drop
+shadows and glows — `cardGlow` resolves to `transparent`.
+
+### Brand & Logo
+
+**The mark** is a rising *M* whose final upstroke continues past the cap height
+and becomes an arrow. One continuous pen: the letterform and the arrow are the
+same stroke weight with the same round caps and joins, so it reads as a single
+gesture rather than a letter with an arrow stuck on it. The middle vertex of the
+M sits *above* the baseline, which lifts the centre and makes the whole form
+point upward.
+
+The mark is generated from geometry, not traced. Proportions live in one place
+and every asset is a fresh render at its target size, never a resample.
+
+**Colour: monochrome, always.**
+
+| Context | Background | Glyph |
+|---|---|---|
+| App icon | `#18181B` | `#FAFAFA` |
+| On light surfaces | — | `#18181B` |
+| On dark surfaces | — | `#FAFAFA` |
+| Android monochrome | transparent | `#FFFFFF` (system recolours it) |
+
+Never apply a gradient, glow, outer shadow or second hue to the mark. The
+previous blue-and-orange logo is retired precisely because it contradicted the
+neutral-first rule above.
+
+**Clear space.** Keep free space of at least the stroke width (≈8% of the mark's
+height) on all sides. The app icon carries a 20% inset; the Android adaptive
+foreground carries 30%, because the launcher masks that layer to a shape of its
+choosing and keeps only the central ~66%.
+
+**Assets** (`assets/images/`)
+
+| File | Size | Notes |
+|---|---|---|
+| `icon.png` | 1024² | Full-bleed square. iOS applies its own corner mask — a pre-rounded PNG gets masked twice and reads as inset. |
+| `splash-icon.png` | 1024² | Transparent, ink glyph, for the light splash. |
+| `splash-icon-dark.png` | 1024² | Transparent, paper glyph. One image cannot serve both splashes — an ink glyph is invisible on the dark background. |
+| `favicon.png` | 256² | Keeps the filled background; a bare glyph disappears in a browser tab. |
+| `android-icon-foreground.png` | 1024² | Transparent, 30% inset. |
+| `android-icon-monochrome.png` | 1024² | Solid white silhouette; Android 13+ themed icons recolour it. |
+| `logo.png` / `logo-dark.png` | 1600px wide | Mark + "Resumax" lockup for stores and marketing. |
+
+Verified legible down to 28×28px, which is below any size the OS actually
+renders the icon at.
+
+**Minimum sizes.** Mark alone: 24px. Full lockup: 120px wide — below that, set
+the mark on its own rather than shrinking the type.
 
 ### Typography
 **Font Family:** System default (San Francisco on iOS, Roboto on Android)

@@ -11,6 +11,7 @@ import LoginScreen from "@/screens/LoginScreen";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ResumeProvider } from "@/contexts/ResumeContext";
 import { UserProvider, useUser } from "@/contexts/UserContext";
+import { PreferencesProvider } from "@/contexts/PreferencesContext";
 // CreditsProvider removed
 import { RevenueCatProvider } from "@/contexts/RevenueCatContext";
 
@@ -42,10 +43,12 @@ export default function App() {
           <KeyboardProvider>
             <UserProvider>
               <RevenueCatProvider>
-                <ResumeProvider>
-                  <AppContent />
-                  <StatusBar style="auto" />
-                </ResumeProvider>
+                <PreferencesProvider>
+                  <ResumeProvider>
+                    <AppContent />
+                    <StatusBar style="auto" />
+                  </ResumeProvider>
+                </PreferencesProvider>
               </RevenueCatProvider>
             </UserProvider>
           </KeyboardProvider>

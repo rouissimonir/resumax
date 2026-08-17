@@ -4,7 +4,11 @@ from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import logging
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from services.templates import get_template
+# NOTE: extraction is deliberately format-independent. /api/generate-pdf
+# re-renders from the stored JSON without calling the model again, so if the
+# prompt varied by template the languages section would vanish the moment a
+# user switched format. The renderer decides what to display; this file always
+# extracts the maximal document.
 
 # Thread pool for running blocking Gemini API calls
 _executor = ThreadPoolExecutor(max_workers=4)
@@ -107,79 +111,408 @@ Return ONLY the improved resume text following the EXACT structure above with se
 
 import json
 
-async def improve_resume_text(original_text: str, file_id: str = None, template_id: str = "professional") -> dict:
+# ── Post-parse validation ─────────────────────────────────────────────────
+#
+# Everything below exists because prompt rules are a soft control. The model
+# will occasionally invent a CEFR level, or return "Not specified" where it was
+# asked for null. Dropping an unverifiable value is always safer than passing it
+# through to a document a recruiter will read.
+
+_CEFR_LEVELS = {"A1", "A2", "B1", "B2", "C1", "C2"}
+
+# Values models emit when they mean "absent".
+_NULLISH = {
+    "", "n/a", "na", "none", "null", "not found", "not provided",
+    "not specified", "not stated", "unknown", "-", "--", "tbd",
+}
+
+
+def _nullify(value):
+    """Collapse the model's many ways of saying 'nothing' into None."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if value.strip().lower() in _NULLISH:
+            return None
+        return value.strip()
+    return value
+
+
+def _cefr(value):
+    """Return a CEFR code only if the model actually produced one."""
+    if value is None:
+        return None
+    code = str(value).strip().upper()
+    return code if code in _CEFR_LEVELS else None
+
+
+def _normalize_languages(raw):
+    """
+    Keep only entries with a real language name, and only levels that are valid
+    CEFR codes. Anything else is dropped rather than guessed at.
+    """
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw[:8]:                      # a CV listing 9+ languages is noise
+        if not isinstance(item, dict):
+            continue
+        name = _nullify(item.get("language"))
+        if not name:
+            continue
+        out.append({
+            "language": name,
+            "mother_tongue": bool(item.get("mother_tongue")),
+            "listening": _cefr(item.get("listening")),
+            "reading": _cefr(item.get("reading")),
+            "speaking": _cefr(item.get("speaking")),
+            "writing": _cefr(item.get("writing")),
+            "overall": _cefr(item.get("overall")),
+        })
+    return out
+
+
+# ─────────────────────────────────────────────────────────────
+# LANGUAGE
+# ─────────────────────────────────────────────────────────────
+#
+# Detection is the model's job: it reads the whole document anyway, and a
+# statistical detector is unreliable on exactly this input — a French CV is
+# dense with English technical nouns ("Spring Boot", "Full-Stack",
+# "microservices") and the bullets are short. The stopword count below exists
+# only as a fallback for when the model omits the field.
+
+SUPPORTED_LANGUAGES = ("en", "fr")
+DEFAULT_LANGUAGE = "en"
+
+_STOPWORDS = {
+    "fr": {
+        "et", "de", "des", "les", "la", "le", "un", "une", "du", "en", "pour",
+        "avec", "dans", "sur", "par", "au", "aux", "ans", "chez", "afin",
+        "ainsi", "entre", "plus", "ses", "son", "sa", "leur", "est", "sont",
+    },
+    "en": {
+        "and", "the", "of", "for", "with", "in", "on", "by", "to", "at",
+        "from", "years", "a", "an", "as", "was", "were", "is", "are", "their",
+    },
+}
+
+
+def detect_language(text: str) -> str:
+    """
+    Fallback language detection by stopword frequency.
+
+    Only ever consulted when the model did not return a usable language. Ties
+    and empty input resolve to English rather than raising: a CV rendered with
+    English headings is a cosmetic problem, a 500 is not.
+    """
+    if not text:
+        return DEFAULT_LANGUAGE
+
+    words = re.findall(r"[a-zà-öø-ÿ]+", text.lower())
+    if not words:
+        return DEFAULT_LANGUAGE
+
+    counts = {lang: sum(w in stops for w in words) for lang, stops in _STOPWORDS.items()}
+    best = max(counts, key=counts.get)
+    return best if counts[best] else DEFAULT_LANGUAGE
+
+
+def resolve_language(model_value, original_text: str, preference: str = None) -> str:
+    """
+    Decide the CV language from, in order: an explicit user preference, the
+    model's own reading of the document, then stopword counting.
+    """
+    if preference and preference.lower() in SUPPORTED_LANGUAGES:
+        return preference.lower()
+
+    if isinstance(model_value, str) and model_value.strip():
+        code = model_value.strip().lower()[:2]
+        if code in SUPPORTED_LANGUAGES:
+            return code
+        # The model read the document and named a language we have no label
+        # table for. Trust that reading and fall back to English headings —
+        # do NOT re-guess with the stopword counter, which only knows en/fr
+        # and would mislabel. Spanish in particular shares "de", "en", "la",
+        # "un", "son" and "entre" with French and scores as French.
+        logger.info(
+            "CV language '%s' has no label table; using '%s' headings. "
+            "The CV's own text is unaffected.", code, DEFAULT_LANGUAGE,
+        )
+        return DEFAULT_LANGUAGE
+
+    detected = detect_language(original_text)
+    logger.info("Language not supplied by model; stopword fallback chose '%s'.", detected)
+    return detected
+
+
+def normalize_extraction(data: dict) -> dict:
+    """Clean the model's JSON so downstream renderers can trust its shape."""
+    if not isinstance(data, dict):
+        return {}
+
+    header = data.get("header")
+    if isinstance(header, dict):
+        for key in (
+            "name", "email", "phone", "linkedin", "address", "website",
+            "job_title", "date_of_birth", "nationality",
+        ):
+            if key in header:
+                header[key] = _nullify(header[key])
+    else:
+        data["header"] = {}
+
+    data["summary"] = _nullify(data.get("summary"))
+    data["driving_licence"] = _nullify(data.get("driving_licence"))
+    data["languages"] = _normalize_languages(data.get("languages"))
+
+    for key in ("education", "experience"):
+        if not isinstance(data.get(key), list):
+            data[key] = []
+
+    return data
+
+
+def _preference_rules(target_role: str = None, experience_level: str = None,
+                      language: str = None) -> str:
+    """
+    Render the user's saved preferences as prompt rules. Returns "" when nothing
+    is set, so an unconfigured account produces the exact prompt it did before.
+    """
+    rules = []
+    if target_role:
+        rules.append(
+            f'- The candidate is targeting: "{target_role}". Where the source text '
+            "supports it, prefer wording and keywords relevant to that role so the CV "
+            "reads well to an ATS screening for it. This is a matter of EMPHASIS ONLY: "
+            "never add a skill, tool or responsibility the candidate did not write."
+        )
+    if experience_level:
+        rules.append(
+            f'- Career stage: "{experience_level}". Pitch the summary and bullet '
+            "emphasis accordingly. Do not invent seniority the source does not show."
+        )
+    if language:
+        rules.append(
+            f'- Write the improved content in "{language}". The source is already in '
+            "this language; do NOT translate it, simply keep it consistent."
+        )
+    if not rules:
+        return ""
+    return "USER PREFERENCES (emphasis only — they never override the integrity rules):\n" + "\n".join(rules) + "\n"
+
+
+async def improve_resume_text(
+    original_text: str,
+    file_id: str = None,
+    template_id: str = "professional",
+    target_role: str = None,
+    experience_level: str = None,
+    language: str = None,
+) -> dict:
     logger.info("=" * 80)
-    logger.info("STARTING RESUME IMPROVEMENT PROCESS (JSON MODE)")
+    logger.info("STARTING RESUME IMPROVEMENT PROCESS")
     logger.info("=" * 80)
     logger.info(f"File ID: {file_id}")
     logger.info(f"Template ID: {template_id}")
     
     try:
-        api_key = os.getenv("GEMINI_API_KEY", "")
-        
-        if not api_key:
-            logger.warning("⚠️ No Gemini API key found, using simulation mode")
-            # Simulation mode for JSON not fully implemented, returning basic structure
-            return {
-                "header": {"name": "Simulation User", "email": "sim@example.com"},
-                "skills": "Simulation, Mode, Only"
-            }
-        
-        logger.info("Initializing Gemini model...")
         model_name = os.getenv("LLM_MODEL", "gemini-1.5-flash")
         logger.info(f"Using model: {model_name}")
+
+        # Pre-process: Extract contact info using regex (more reliable than LLM for messy OCR)
+        import re
         
-        # Configure model with JSON response type
-        model = genai.GenerativeModel(
-            model_name=model_name,
-            generation_config={
-                "temperature": 0.7,
-                "response_mime_type": "application/json"
-            }
-        )
+        # 1. Extract Email
+        emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', original_text)
+        detected_email = emails[0] if emails else "Not found"
         
+        # 2. Extract Phone (various formats)
+        phones = re.findall(r'(?:\+?\d{1,3}[\s-]?)?\(?\d{2,4}\)?[\s-]?\d{3,4}[\s-]?\d{3,4}', original_text)
+        detected_phone = phones[0] if phones else "Not found"
+        
+        # 3. Clean OCR garbage (icons misread as text)
+        clean_text = original_text
+        garbage_patterns = [
+            r'/envel[^\s]*?(?=[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-])', # Specific prefix for email
+            r'/envel[^\s]{0,5}', # General prefix
+            r'/h[^\s]*?me', r'/linked[^\s]*?', r'/github[^\s]*?', 
+            r'♂', r'♀', r'¶', r'⌢', r'|', r'\(cid:\d+\)',
+            r'^\s*pe\s*(?=[a-zA-Z0-9._%+-]+@)', # Rogue 'pe' before email
+        ]
+        for pattern in garbage_patterns:
+            clean_text = re.sub(pattern, '', clean_text)
+        
+        # Additional surgical fix for the "perouissi" case
+        if detected_email != "Not found":
+            # If the email in the text starts with 'pe' + the detected email, strip 'pe'
+            pe_version = "pe" + detected_email
+            if pe_version in clean_text:
+                clean_text = clean_text.replace(pe_version, detected_email)
+
+        logger.info(f"Detected Email: {detected_email}")
+        logger.info(f"Detected Phone: {detected_phone}")
+
         prompt = f"""
-        You are an expert Resume Writer. 
+        You are an expert Resume Writer.
         1. Parse the following resume text.
-        2. IMPROVE the content: Use strong action verbs, quantify results, fix grammar.
-        3. Return a JSON Object with this exact schema:
+        2. EXTRACT CONTACT INFO EXACTLY: Do not change email, phone, or address.
+        3. IMPROVE the content: Use strong action verbs, quantify results, fix grammar.
+
+        TEXT REPAIR RULES (the source text came from a PDF and may be damaged):
+        - The extractor scatters word boundaries. Repair split and merged words:
+          "exp érience" -> "expérience", "implémentédes" -> "implémenté des",
+          "syst èmes distribu és" -> "systèmes distribués", "z éroun" -> "zéro un".
+        - Fix ONLY spacing/word-boundary damage this way. Repairing a broken word
+          is not the same as changing it: never swap in a different word, and never
+          alter names, companies, emails, URLs or dates while repairing.
+        - If a word is already correct, leave it exactly as it is.
+
+        CONTENT INTEGRITY RULES (CRITICAL — NEVER VIOLATE):
+        - NEVER invent metrics, numbers, or percentages that are not in the original text.
+          Only quantify with figures the candidate actually wrote. If a bullet has no
+          number, improve the wording WITHOUT adding a fake number.
+        - NEVER add skills, employers, degrees, certifications, or dates not in the source.
+        - NEVER change dates, job titles, company names, or contact details.
+        - Keep the resume in its ORIGINAL LANGUAGE (do not translate).
+        - Order experience and education reverse-chronologically (most recent first).
+
+        STYLE RULES:
+        - Every bullet starts with a strong action verb (Led, Designed, Reduced, Automated).
+        - No personal pronouns (I, me, my) and no weak phrases ("responsible for", "helped with").
+        - Keep each bullet to at most 2 lines; 3-6 bullets per role.
+        - Present tense for the current role, past tense for previous roles.
+        - One consistent date format throughout.
+
+        4. Return a JSON Object with this exact schema:
         {{
-            "header": {{ "name": "...", "email": "...", "phone": "...", "linkedin": "..." }},
+            "language": "en",
+            "header": {{ "name": "...", "email": "...", "phone": "...", "linkedin": "...", "address": "...", "website": "...",
+                        "job_title": null, "date_of_birth": null, "nationality": null }},
+            "summary": null,
             "education": [ {{ "school": "...", "degree": "...", "location": "...", "date": "..." }} ],
             "experience": [ {{ "company": "...", "role": "...", "location": "...", "date": "...", "bullets": ["...", "..."] }} ],
-            "skills": "Skill 1, Skill 2, Skill 3"
+            "skills": "Skill 1, Skill 2, Skill 3",
+            "languages": [ {{ "language": "...", "mother_tongue": false, "listening": null, "reading": null,
+                             "speaking": null, "writing": null, "overall": null }} ],
+            "driving_licence": null
         }}
+
+        LANGUAGE FIELD:
+        - "language": the ISO 639-1 code of the language the CV PROSE is written in
+          ("fr" for French, "en" for English). Judge by the sentences the candidate
+          wrote, NOT by technical terms. A French CV mentioning "Spring Boot",
+          "microservices" and "Full-Stack" is still "fr".
+        - This selects the language of the section headings in the generated PDF, so
+          it must match the prose. Do not translate the CV itself.
+
+        OPTIONAL FIELDS — EXTRACT ONLY, NEVER INFER:
+        These exist because some countries expect them. They must reflect the source
+        document exactly. An invented date of birth or nationality on a resume creates
+        real legal exposure for the employer who reads it.
+        - languages: include a language ONLY if the CV explicitly lists it under a
+          languages section (Languages / Langues / Sprachen / Idiomas / Lingue / Talen
+          or equivalent). Do NOT infer languages from the language the CV is written in,
+          from the candidate's nationality, from their address, or from country names
+          appearing anywhere in the document. If there is no languages section at all,
+          return "languages": [].
+        - CEFR levels: copy a level ONLY if the source states a CEFR code (A1 A2 B1 B2
+          C1 C2) or an unambiguous equivalent. Map: "native"/"mother tongue" ->
+          mother_tongue true with all level fields null; "fluent"/"advanced" -> C1;
+          "upper intermediate" -> B2; "intermediate" -> B1; "basic"/"elementary" -> A2;
+          "beginner" -> A1. If the source gives ONE overall level, put it in "overall"
+          and leave listening, reading, speaking and writing null.
+          NEVER guess per-skill levels the source did not state.
+        - date_of_birth, nationality, driving_licence: include ONLY if explicitly
+          written in the source. Otherwise null. Never derive nationality from an
+          address, a name, or the language of the document.
+        - job_title: the candidate's current or target title, only if the CV states one.
+        - summary: if the CV already has a Profile / Summary / Objective / Profil
+          section, tighten its wording. If it has none, return null.
+          NEVER write a summary from scratch.
+
+        {_preference_rules(target_role, experience_level, language)}
+        CRITICAL CONTACT INFO HINTS (Use these exactly if they look correct):
+        - Email Hint: {detected_email}
+        - Phone Hint: {detected_phone}
+        
+        HINT RULES:
+        - If the Email Hint is "Not found", look at the RAW TEXT carefully.
+        - If you see "/envel" or "pe" or other symbols attached to an email, STRIP them.
         
         RAW TEXT:
-        {original_text}
+        {clean_text}
         """
 
-        logger.info(f"🚀 Sending improvement request to Gemini...")
-        
-        # Run blocking API call in thread pool
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            _executor, model.generate_content, prompt
-        )
-        
-        logger.info("✓ Received response from Gemini")
+        # Choose the provider based on model name
+        if "llama" in model_name.lower():
+            logger.info("Using GROQ/LLAMA Provider")
+            from groq import Groq
+            client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+            
+            # Groq is sync, run in executor
+            loop = asyncio.get_event_loop()
+            chat_completion = await loop.run_in_executor(
+                _executor, 
+                lambda: client.chat.completions.create(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=model_name,
+                    response_format={"type": "json_object"},
+                    temperature=0.0
+                )
+            )
+            response_text = chat_completion.choices[0].message.content
+            
+        else:
+            logger.info("Using GOOGLE/GEMINI Provider")
+            api_key = os.getenv("GEMINI_API_KEY", "")
+            if not api_key:
+                logger.error("✗ GEMINI_API_KEY NOT FOUND!")
+                return {"header": {"name": "Simulation User"}, "skills": "Error: No API Key"}
+
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                generation_config={
+                    "temperature": 0.0,
+                    "response_mime_type": "application/json",
+                }
+            )
+            
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                _executor, model.generate_content, prompt
+            )
+            response_text = response.text
+
+        logger.info("✓ Received response from AI")
         
         # Parse JSON
         try:
             import json_repair
-            data = json_repair.loads(response.text)
+            data = json_repair.loads(response_text)
             logger.info("✓ JSON parsed successfully with json_repair")
         except Exception as e:
-            logger.error(f"✗ JSON parsing failed even with json_repair: {str(e)}")
-            logger.error(f"Raw response: {response.text[:500]}...") # Log first 500 chars
+            logger.error(f"✗ JSON parsing failed: {str(e)}")
+            logger.error(f"Raw response: {response_text[:500]}...")
             raise ValueError(f"Failed to parse AI response: {str(e)}")
 
-        # Save debug output
-        if file_id:
-            output_path = f"backend/outputs/{file_id}_data.json"
-            with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2)
-            logger.info(f"Debug JSON saved to: {output_path}")
+        # Validate the optional fields the model was asked for. The prompt rules
+        # are the first control; this is the second. Models disobey occasionally,
+        # and an invented CEFR level or nationality is worse than a missing one.
+        data = normalize_extraction(data)
+
+        # Resolve once, here, and persist it on the payload. main.py writes this
+        # dict to {file_id}_debug.json, so a later re-render into a different
+        # format reuses the same language instead of re-deciding it and
+        # producing English headings the second time round.
+        data["language"] = resolve_language(data.get("language"), original_text, language)
+        logger.info("CV language resolved to '%s'", data["language"])
+
+        # NOTE: main.py persists {file_id}_debug.json, which is what
+        # /api/generate-pdf reloads to re-render in a different format. The old
+        # duplicate write to {file_id}_data.json was removed — it wrote the same
+        # content to a relative path that breaks unless the server is launched
+        # from the repo root, and nothing ever read it.
 
         return data
 

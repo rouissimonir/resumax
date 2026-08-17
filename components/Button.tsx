@@ -5,12 +5,12 @@ import {
   ViewStyle,
   StyleProp,
   ActivityIndicator,
+  View,
 } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
+  withTiming,
 } from "react-native-reanimated";
 
 import { ThemedText } from "@/components/ThemedText";
@@ -19,8 +19,6 @@ import {
   BorderRadius,
   Spacing,
   Typography,
-  Gradients,
-  Shadows,
   Animations,
 } from "@/constants/theme";
 
@@ -30,8 +28,11 @@ interface ButtonProps {
   style?: StyleProp<ViewStyle>;
   disabled?: boolean;
   loading?: boolean;
-  variant?: "primary" | "secondary" | "outline" | "ghost";
+  variant?: "primary" | "secondary" | "outline" | "ghost" | "destructive";
   size?: "small" | "medium" | "large";
+  /** Optional leading element, e.g. an icon. */
+  icon?: ReactNode;
+  fullWidth?: boolean;
 }
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -44,109 +45,91 @@ export function Button({
   loading = false,
   variant = "primary",
   size = "medium",
+  icon,
+  fullWidth = false,
 }: ButtonProps) {
-  const { theme, colorScheme } = useTheme();
-  const scale = useSharedValue(1);
+  const { theme } = useTheme();
+  const pressed = useSharedValue(0);
 
+  // Opacity rather than scale: a button that shrinks on every tap is the
+  // tell-tale sign of a templated interface.
   const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
+    opacity: withTiming(pressed.value ? 0.86 : 1, {
+      duration: Animations.instant,
+    }),
   }));
 
-  const handlePressIn = () => {
-    if (!disabled && !loading) {
-      scale.value = withSpring(0.97, Animations.spring);
-    }
-  };
-
-  const handlePressOut = () => {
-    scale.value = withSpring(1, Animations.spring);
-  };
-
-  const getSizeStyle = () => {
+  const sizeStyle = (() => {
     switch (size) {
       case "small":
-        return { height: 40, paddingHorizontal: Spacing.md };
+        return { height: 36, paddingHorizontal: Spacing.md };
       case "large":
-        return { height: 56, paddingHorizontal: Spacing.xl };
+        return { height: 52, paddingHorizontal: Spacing.xl };
       default:
         return { height: Spacing.buttonHeight, paddingHorizontal: Spacing.lg };
     }
-  };
+  })();
 
-  const renderContent = () => {
-    if (loading) {
-      return (
-        <ActivityIndicator
-          color={variant === "primary" ? "#FFF" : theme.primary}
-        />
-      );
+  const surface: ViewStyle = (() => {
+    switch (variant) {
+      case "primary":
+        return { backgroundColor: theme.primary };
+      case "destructive":
+        return { backgroundColor: theme.error };
+      case "secondary":
+        return {
+          backgroundColor: theme.backgroundSecondary,
+          borderWidth: 1,
+          borderColor: theme.border,
+        };
+      case "outline":
+        return {
+          backgroundColor: "transparent",
+          borderWidth: 1,
+          borderColor: theme.border,
+        };
+      default:
+        return { backgroundColor: "transparent" };
     }
-    return (
-      <ThemedText
-        style={[
-          Typography.button,
-          { color: variant === "primary" ? "#FFF" : theme.primary },
-        ]}
-      >
-        {children}
-      </ThemedText>
-    );
-  };
+  })();
 
-  if (variant === "primary") {
-    return (
-      <AnimatedPressable
-        onPress={disabled || loading ? undefined : onPress}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        disabled={disabled || loading}
-        style={[
-          styles.button,
-          getSizeStyle(),
-          { opacity: disabled ? 0.5 : 1 },
-          Shadows.glow,
-          style,
-          animatedStyle,
-        ]}
-      >
-        <LinearGradient
-          colors={
-            colorScheme === "dark"
-              ? Gradients.dark.primary
-              : Gradients.light.primary
-          }
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={styles.gradient}
-        >
-          {renderContent()}
-        </LinearGradient>
-      </AnimatedPressable>
-    );
-  }
+  const contentColor =
+    variant === "primary" || variant === "destructive"
+      ? theme.buttonText
+      : theme.text;
 
   return (
     <AnimatedPressable
       onPress={disabled || loading ? undefined : onPress}
-      onPressIn={handlePressIn}
-      onPressOut={handlePressOut}
+      onPressIn={() => {
+        pressed.value = 1;
+      }}
+      onPressOut={() => {
+        pressed.value = 0;
+      }}
       disabled={disabled || loading}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: disabled || loading, busy: loading }}
       style={[
         styles.button,
-        getSizeStyle(),
-        variant === "outline" && {
-          borderWidth: 1.5,
-          borderColor: theme.primary,
-        },
-        variant === "secondary" && {
-          backgroundColor: theme.primaryLight + "20",
-        },
-        { opacity: disabled ? 0.5 : 1 },
+        sizeStyle,
+        surface,
+        fullWidth && styles.fullWidth,
+        disabled && { opacity: 0.4 },
         style,
         animatedStyle,
       ]}
     >
-      {renderContent()}
+      {loading ? (
+        <ActivityIndicator size="small" color={contentColor} />
+      ) : (
+        <View style={styles.content}>
+          {icon ? <View style={styles.icon}>{icon}</View> : null}
+          <ThemedText style={[Typography.button, { color: contentColor }]}>
+            {children}
+          </ThemedText>
+        </View>
+      )}
     </AnimatedPressable>
   );
 }
@@ -156,12 +139,15 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.md,
     alignItems: "center",
     justifyContent: "center",
-    overflow: "hidden",
   },
-  gradient: {
-    flex: 1,
-    width: "100%",
+  fullWidth: {
+    alignSelf: "stretch",
+  },
+  content: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+  },
+  icon: {
+    marginRight: Spacing.sm,
   },
 });

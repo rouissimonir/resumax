@@ -4,35 +4,34 @@ import {
   StyleSheet,
   Pressable,
   Alert,
-  Share,
   Platform,
   Animated,
-  Easing,
+  ActivityIndicator,
+  ScrollView,
+  Modal,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { RouteProp, useRoute, useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
-import * as StoreReview from "expo-store-review";
-import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { BlurView } from "expo-blur";
-import { ScrollView, Modal } from "react-native";
-import { RatingModal } from "@/components/RatingModal";
 
+import { RatingModal } from "@/components/RatingModal";
 import { ScreenScrollView } from "@/components/ScreenScrollView";
 import { ThemedText } from "@/components/ThemedText";
+import { CVSuggestionsCard } from "@/components/CVSuggestionsCard";
 import { useTheme } from "@/hooks/useTheme";
 import {
   Spacing,
   BorderRadius,
   Typography,
-  Gradients,
-  Shadows,
   Animations,
+  Hairline,
+  PressedOpacity,
 } from "@/constants/theme";
 import { useResumes } from "@/contexts/ResumeContext";
+import { useRevenueCat } from "@/contexts/RevenueCatContext";
 import { resumeApi } from "@/services/resumeApi";
 import { HomeStackParamList } from "@/navigation/HomeStackNavigator";
 
@@ -40,151 +39,118 @@ type PreviewRouteProp = RouteProp<HomeStackParamList, "Preview">;
 type NavigationProp = NativeStackNavigationProp<HomeStackParamList, "Preview">;
 
 export default function PreviewScreen() {
-  const { theme, colorScheme, isDark } = useTheme();
+  const { theme } = useTheme();
   const route = useRoute<PreviewRouteProp>();
   const navigation = useNavigation<NavigationProp>();
   const { getResumeById } = useResumes();
+  const { isPro, userId } = useRevenueCat();
   const insets = useSafeAreaInsets();
 
-  // Download states
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showRatingPrompt, setShowRatingPrompt] = useState(false);
 
-  // Animations
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(0.9)).current;
-  const checkAnim = useRef(new Animated.Value(0)).current;
-  const buttonScaleAnim = useRef(new Animated.Value(1)).current;
+  // A single, short entrance. Nothing loops.
+  const enterAnim = useRef(new Animated.Value(0)).current;
   const progressAnim = useRef(new Animated.Value(0)).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const successScaleAnim = useRef(new Animated.Value(0)).current;
-  const iconRotateAnim = useRef(new Animated.Value(0)).current;
 
   const resume = getResumeById(route.params.resumeId);
 
   useEffect(() => {
-    // Entry animations
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: Animations.slow,
-        useNativeDriver: true,
-      }),
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        ...Animations.spring,
-        useNativeDriver: true,
-      }),
-    ]).start();
-
-    // Success icon pulse
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(checkAnim, {
-          toValue: 1,
-          duration: 2000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(checkAnim, {
-          toValue: 0,
-          duration: 2000,
-          useNativeDriver: true,
-        }),
-      ]),
-    ).start();
-
-    // Download button pulse animation
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.02,
-          duration: 1500,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 1500,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ]),
-    ).start();
+    Animated.timing(enterAnim, {
+      toValue: 1,
+      duration: Animations.slow,
+      useNativeDriver: true,
+    }).start();
   }, []);
 
-  // Animate progress bar
   useEffect(() => {
     Animated.timing(progressAnim, {
       toValue: downloadProgress,
-      duration: 200,
+      duration: Animations.normal,
       useNativeDriver: false,
     }).start();
   }, [downloadProgress]);
 
-  // Success animation
-  useEffect(() => {
-    if (downloadSuccess) {
-      Animated.sequence([
-        Animated.spring(successScaleAnim, {
-          toValue: 1.2,
-          useNativeDriver: true,
-          ...Animations.spring,
-        }),
-        Animated.spring(successScaleAnim, {
-          toValue: 1,
-          useNativeDriver: true,
-          ...Animations.spring,
-        }),
-      ]).start();
-    } else {
-      successScaleAnim.setValue(0);
-    }
-  }, [downloadSuccess]);
+  const handleShare = async () => {
+    if (!resume) return;
+    try {
+      const downloadUrl = resumeApi.getDownloadUrl(resume.id);
 
-  // Loading icon rotation
-  useEffect(() => {
-    if (isDownloading) {
-      Animated.loop(
-        Animated.timing(iconRotateAnim, {
-          toValue: 1,
-          duration: 1000,
-          easing: Easing.linear,
-          useNativeDriver: true,
-        }),
-      ).start();
-    } else {
-      iconRotateAnim.setValue(0);
+      if (Platform.OS === "web") {
+        if (navigator.share) {
+          await navigator.share({
+            title: "My Improved Resume",
+            text: "Check out my professionally formatted resume",
+            url: downloadUrl,
+          });
+        } else {
+          await navigator.clipboard.writeText(downloadUrl);
+          Alert.alert("Link copied", "Download link copied to clipboard.");
+        }
+        return;
+      }
+
+      const fileUri = FileSystem.documentDirectory + "CV.pdf";
+      const downloadResumable = FileSystem.createDownloadResumable(
+        downloadUrl,
+        fileUri,
+      );
+      const result = await downloadResumable.downloadAsync();
+
+      if (!result || result.status !== 200) {
+        throw new Error("Failed to download PDF for sharing");
+      }
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: "application/pdf",
+          dialogTitle: "Share your CV",
+          UTI: "com.adobe.pdf",
+        });
+      } else {
+        Alert.alert(
+          "Sharing unavailable",
+          "Sharing is not available on this device.",
+        );
+      }
+    } catch (error: any) {
+      console.error("Share error:", error);
+      Alert.alert("Share failed", error.message || "Failed to share resume.");
     }
-  }, [isDownloading]);
+  };
+
+  React.useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <Pressable
+          onPress={handleShare}
+          hitSlop={10}
+          style={({ pressed }) => [
+            styles.headerButton,
+            pressed && { opacity: PressedOpacity },
+          ]}
+        >
+          <Feather name="share" size={20} color={theme.text} />
+        </Pressable>
+      ),
+    });
+  }, [navigation, theme]);
 
   if (!resume) {
     return (
       <ScreenScrollView>
-        <View style={styles.container}>
-          <ThemedText>Resume not found</ThemedText>
+        <View style={styles.emptyState}>
+          <ThemedText type="h3">Resume not found</ThemedText>
+          <ThemedText tone="secondary" style={{ marginTop: Spacing.xs }}>
+            It may have been cleared from this session.
+          </ThemedText>
         </View>
       </ScreenScrollView>
     );
   }
-
-  const handleButtonPressIn = () => {
-    Animated.spring(buttonScaleAnim, {
-      toValue: 0.96,
-      useNativeDriver: true,
-      ...Animations.spring,
-    }).start();
-  };
-
-  const handleButtonPressOut = () => {
-    Animated.spring(buttonScaleAnim, {
-      toValue: 1,
-      useNativeDriver: true,
-      ...Animations.spring,
-    }).start();
-  };
 
   const handleDownload = async () => {
     try {
@@ -192,23 +158,42 @@ export default function PreviewScreen() {
       setDownloadSuccess(false);
       setDownloadProgress(0);
 
-      // Check if PDF already exists, if not it will be generated on-demand
+      if (!isPro) {
+        Alert.alert(
+          "Pro required",
+          "Downloading your Harvard-style resume requires Pro.",
+          [
+            { text: "Not now", style: "cancel" },
+            {
+              text: "See plans",
+              onPress: () => navigation.navigate("Pricing" as any),
+            },
+          ],
+        );
+        setIsDownloading(false);
+        return;
+      }
+
+      if (!userId) {
+        Alert.alert("Error", "User ID not found. Please restart the app.");
+        setIsDownloading(false);
+        return;
+      }
+
+      // Pass the template the user actually chose. Omitting it made the server
+      // fall back to "professional", so any other choice was silently discarded
+      // at download time.
+      await resumeApi.generatePdf(resume.id, userId, resume.templateId);
       const downloadUrl = resumeApi.getDownloadUrl(resume.id);
 
       if (Platform.OS === "web") {
-        // Simulate progress for web
         for (let i = 0; i <= 100; i += 20) {
           setDownloadProgress(i);
           await new Promise((r) => setTimeout(r, 100));
         }
-
-        // Try to download, if 404 the backend will handle it
         const response = await fetch(downloadUrl);
-        if (response.ok) {
-          window.open(downloadUrl, "_blank");
-        } else {
-          throw new Error("Failed to download PDF");
-        }
+        if (!response.ok) throw new Error("Failed to download PDF");
+        window.open(downloadUrl, "_blank");
 
         setDownloadSuccess(true);
         setTimeout(() => setDownloadSuccess(false), 3000);
@@ -221,11 +206,13 @@ export default function PreviewScreen() {
         fileUri,
         {},
         (progress) => {
-          const percent = Math.round(
-            (progress.totalBytesWritten / progress.totalBytesExpectedToWrite) *
-              100,
+          setDownloadProgress(
+            Math.round(
+              (progress.totalBytesWritten /
+                progress.totalBytesExpectedToWrite) *
+                100,
+            ),
           );
-          setDownloadProgress(percent);
         },
       );
 
@@ -234,18 +221,12 @@ export default function PreviewScreen() {
 
       setDownloadSuccess(true);
 
-      // Haptic feedback would go here if using expo-haptics
-
-      // Ask for review if available
       if (Platform.OS !== "web") {
-        setTimeout(async () => {
-          setShowRatingPrompt(true);
-        }, 2000);
+        setTimeout(() => setShowRatingPrompt(true), 2000);
       }
 
       setTimeout(async () => {
         if (Platform.OS === "android") {
-          // Android Direct Save
           try {
             const permissions =
               await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
@@ -262,50 +243,26 @@ export default function PreviewScreen() {
               await FileSystem.writeAsStringAsync(newFileUri, base64, {
                 encoding: FileSystem.EncodingType.Base64,
               });
-              Alert.alert("Success", "PDF Saved to selected folder");
-
-              // Also offer to open
-              if (await Sharing.isAvailableAsync()) {
-                await Sharing.shareAsync(result.uri, {
-                  mimeType: "application/pdf",
-                  UTI: "com.adobe.pdf",
-                  dialogTitle: "Open with...",
-                });
-              }
-            } else {
-              // Fallback to "Open With" if permission denied
-              if (await Sharing.isAvailableAsync()) {
-                await Sharing.shareAsync(result.uri, {
-                  mimeType: "application/pdf",
-                  UTI: "com.adobe.pdf",
-                  dialogTitle: "Open with...",
-                });
-              }
+              Alert.alert("Saved", "PDF saved to the selected folder.");
             }
-          } catch (e) {
-            // Fallback to "Open With" if SAF fails
-            if (await Sharing.isAvailableAsync()) {
-              await Sharing.shareAsync(result.uri, {
-                mimeType: "application/pdf",
-                UTI: "com.adobe.pdf",
-                dialogTitle: "Open with...",
-              });
-            }
+          } catch {
+            // fall through to the share sheet below
           }
-        } else if (await Sharing.isAvailableAsync()) {
-          // iOS
+        }
+
+        if (await Sharing.isAvailableAsync()) {
           await Sharing.shareAsync(result.uri, {
             mimeType: "application/pdf",
             UTI: "com.adobe.pdf",
-            dialogTitle: "Open with...",
+            dialogTitle: "Open with…",
           });
         }
         setDownloadSuccess(false);
       }, 1000);
     } catch (error: any) {
       Alert.alert(
-        "Download Error",
-        error.message || "Failed to download PDF. Please try again.",
+        "Download failed",
+        error.message || "Could not download the PDF. Please try again.",
       );
       console.error(error);
       setDownloadSuccess(false);
@@ -315,130 +272,21 @@ export default function PreviewScreen() {
     }
   };
 
-  const handleShare = async () => {
-    try {
-      const downloadUrl = resumeApi.getDownloadUrl(resume.id);
-
-      if (Platform.OS === "web") {
-        // On web, share the download link
-        if (navigator.share) {
-          await navigator.share({
-            title: "My Improved Resume",
-            text: "Check out my professionally formatted resume",
-            url: downloadUrl,
-          });
-        } else {
-          // Fallback: copy link to clipboard
-          await navigator.clipboard.writeText(downloadUrl);
-          Alert.alert("Link Copied", "Download link copied to clipboard");
-        }
-        return;
-      }
-
-      // On mobile, download the PDF first, then share it
-      const fileUri = FileSystem.documentDirectory + "CV.pdf";
-
-      // Always download fresh copy for sharing
-      const downloadResumable = FileSystem.createDownloadResumable(
-        downloadUrl,
-        fileUri,
-      );
-      const result = await downloadResumable.downloadAsync();
-
-      if (!result || result.status !== 200) {
-        throw new Error("Failed to download PDF for sharing");
-      }
-
-      // Share the PDF file with professional name
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(fileUri, {
-          mimeType: "application/pdf",
-          dialogTitle: "Share Your CV",
-          UTI: "com.adobe.pdf",
-        });
-      } else {
-        Alert.alert(
-          "Sharing Not Available",
-          "Sharing is not available on this device",
-        );
-      }
-    } catch (error: any) {
-      console.error("Share error:", error);
-      Alert.alert("Share Failed", error.message || "Failed to share resume");
-    }
-  };
-
-  React.useLayoutEffect(() => {
-    navigation.setOptions({
-      headerRight: () => (
-        <Pressable onPress={handleShare} style={styles.headerButton}>
-          <Feather name="share-2" size={22} color={theme.primary} />
-        </Pressable>
-      ),
-    });
-  }, [navigation, theme]);
-
-  const iconRotation = iconRotateAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0deg", "360deg"],
-  });
-
   const progressWidth = progressAnim.interpolate({
     inputRange: [0, 100],
     outputRange: ["0%", "100%"],
   });
 
-  const renderDownloadButtonContent = () => {
-    if (downloadSuccess) {
-      return (
-        <Animated.View
-          style={[
-            styles.buttonContent,
-            { transform: [{ scale: successScaleAnim }] },
-          ]}
-        >
-          <View style={styles.successCheckContainer}>
-            <Feather name="check" size={24} color="#FFF" />
-          </View>
-          <ThemedText style={[Typography.button, styles.buttonText]}>
-            Downloaded!
-          </ThemedText>
-        </Animated.View>
-      );
-    }
+  const specs = [
+    { label: "Format", value: "Harvard" },
+    { label: "Optimised for", value: "Applicant tracking" },
+    { label: "Source file", value: resume.originalFilename },
+  ];
 
-    if (isDownloading) {
-      return (
-        <View style={styles.buttonContent}>
-          <Animated.View style={{ transform: [{ rotate: iconRotation }] }}>
-            <Feather name="loader" size={22} color="#FFF" />
-          </Animated.View>
-          <View style={styles.downloadingTextContainer}>
-            <ThemedText style={[Typography.button, styles.buttonText]}>
-              Downloading
-            </ThemedText>
-            <ThemedText style={[Typography.caption, styles.progressText]}>
-              {downloadProgress}%
-            </ThemedText>
-          </View>
-        </View>
-      );
-    }
-
-    return (
-      <View style={styles.buttonContent}>
-        <View style={styles.downloadIconContainer}>
-          <Feather name="download" size={22} color="#FFF" />
-        </View>
-        <ThemedText style={[Typography.button, styles.buttonText]}>
-          Download PDF
-        </ThemedText>
-        <View style={styles.fileTypeBadge}>
-          <ThemedText style={styles.fileTypeText}>PDF</ThemedText>
-        </View>
-      </View>
-    );
-  };
+  const actions = [
+    { icon: "file-text", label: "Preview content", onPress: () => setShowPreview(true) },
+    { icon: "share", label: "Share resume", onPress: handleShare },
+  ];
 
   return (
     <>
@@ -446,416 +294,206 @@ export default function PreviewScreen() {
         <Animated.View
           style={[
             styles.container,
-            { opacity: fadeAnim, transform: [{ scale: scaleAnim }] },
+            {
+              opacity: enterAnim,
+              transform: [
+                {
+                  translateY: enterAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [10, 0],
+                  }),
+                },
+              ],
+            },
           ]}
         >
-          {/* Success Animation */}
-          <View style={styles.successContainer}>
-            <Animated.View
+          {/* Status — left aligned, compact. No hero medallion. */}
+          <View style={styles.status}>
+            <View
               style={[
-                styles.successIcon,
-                {
-                  backgroundColor: theme.success + "15",
-                  transform: [
-                    {
-                      scale: checkAnim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [1, 1.05],
-                      }),
-                    },
-                  ],
-                },
+                styles.statusMark,
+                { backgroundColor: theme.success + "1A" },
               ]}
             >
-              <View
-                style={[
-                  styles.successIconInner,
-                  { backgroundColor: theme.success },
-                ]}
-              >
-                <Feather name="check" size={40} color="#FFF" />
-              </View>
-            </Animated.View>
-            <ThemedText
-              style={[
-                Typography.h1,
-                { marginTop: Spacing.xl, textAlign: "center" },
-              ]}
-            >
-              Resume Improved!
-            </ThemedText>
-            <ThemedText
-              style={[
-                Typography.body,
-                {
-                  marginTop: Spacing.sm,
-                  textAlign: "center",
-                  color: theme.textSecondary,
-                  paddingHorizontal: Spacing.xl,
-                },
-              ]}
-            >
-              Your Harvard-style PDF resume is ready for download
-            </ThemedText>
+              <Feather name="check" size={15} color={theme.success} />
+            </View>
+            <View style={styles.statusText}>
+              <ThemedText type="h1">Resume improved</ThemedText>
+              <ThemedText tone="secondary" style={{ marginTop: 2 }}>
+                Rewritten, reformatted and ready to download.
+              </ThemedText>
+            </View>
           </View>
 
-          {/* Stats Cards */}
-          <View style={styles.statsContainer}>
-            {[
-              { icon: "file-text", label: "Format", value: "Harvard Style" },
-              { icon: "shield", label: "ATS", value: "Optimized" },
-              { icon: "zap", label: "AI", value: "Enhanced" },
-            ].map((stat, index) => (
+          {/* Spec table — replaces three identical stat tiles. */}
+          <View style={[styles.group, { borderColor: theme.border }]}>
+            {specs.map((spec, i) => (
               <View
-                key={index}
+                key={spec.label}
                 style={[
-                  styles.statCard,
-                  {
-                    backgroundColor: theme.backgroundDefault,
-                    borderColor: theme.border,
+                  styles.specRow,
+                  i > 0 && {
+                    borderTopWidth: Hairline,
+                    borderTopColor: theme.border,
                   },
                 ]}
               >
-                <View
-                  style={[
-                    styles.statIcon,
-                    { backgroundColor: theme.primary + "15" },
-                  ]}
-                >
-                  <Feather
-                    name={stat.icon as any}
-                    size={18}
-                    color={theme.primary}
-                  />
-                </View>
-                <ThemedText
-                  style={[Typography.caption, { color: theme.textSecondary }]}
-                >
-                  {stat.label}
+                <ThemedText tone="secondary" type="bodySmall">
+                  {spec.label}
                 </ThemedText>
-                <ThemedText style={[Typography.h4]}>{stat.value}</ThemedText>
+                <ThemedText
+                  type="bodySmall"
+                  style={styles.specValue}
+                  numberOfLines={1}
+                >
+                  {spec.value}
+                </ThemedText>
               </View>
             ))}
           </View>
 
-          {/* Actions */}
-          <View style={styles.actionsContainer}>
-            <Pressable
-              style={[
-                styles.actionCard,
-                {
-                  backgroundColor: theme.backgroundDefault,
-                  borderColor: theme.border,
-                },
-              ]}
-              onPress={() => setShowPreview(true)}
-            >
-              <View
-                style={[
-                  styles.actionIcon,
-                  { backgroundColor: theme.primary + "15" },
-                ]}
-              >
-                <Feather name="eye" size={20} color={theme.primary} />
-              </View>
-              <ThemedText style={Typography.body}>Preview Content</ThemedText>
-              <Feather
-                name="chevron-right"
-                size={20}
-                color={theme.textSecondary}
-              />
-            </Pressable>
+          <CVSuggestionsCard data={resume.improvedText} />
 
-            <Pressable
-              style={[
-                styles.actionCard,
-                {
-                  backgroundColor: theme.backgroundDefault,
-                  borderColor: theme.border,
-                },
-              ]}
-              onPress={handleShare}
-            >
-              <View
-                style={[
-                  styles.actionIcon,
-                  { backgroundColor: theme.accent + "15" },
+          {/* Actions — one grouped list, hairline separated. */}
+          <View
+            style={[
+              styles.group,
+              { borderColor: theme.border, marginTop: Spacing.xl },
+            ]}
+          >
+            {actions.map((action, i) => (
+              <Pressable
+                key={action.label}
+                onPress={action.onPress}
+                style={({ pressed }) => [
+                  styles.actionRow,
+                  i > 0 && {
+                    borderTopWidth: Hairline,
+                    borderTopColor: theme.border,
+                  },
+                  pressed && { backgroundColor: theme.backgroundSecondary },
                 ]}
               >
-                <Feather name="share-2" size={20} color={theme.accent} />
-              </View>
-              <ThemedText style={Typography.body}>Share Resume</ThemedText>
-              <Feather
-                name="chevron-right"
-                size={20}
-                color={theme.textSecondary}
-              />
-            </Pressable>
+                <Feather
+                  name={action.icon as any}
+                  size={17}
+                  color={theme.textSecondary}
+                />
+                <ThemedText style={styles.actionLabel}>
+                  {action.label}
+                </ThemedText>
+                <Feather
+                  name="chevron-right"
+                  size={17}
+                  color={theme.textMuted}
+                />
+              </Pressable>
+            ))}
           </View>
         </Animated.View>
       </ScreenScrollView>
 
-      {/* Enhanced Download Button */}
+      {/* Download bar */}
       <View
         style={[
-          styles.downloadContainer,
-          { paddingBottom: insets.bottom + Spacing.lg },
+          styles.bar,
+          {
+            backgroundColor: theme.backgroundRoot,
+            borderTopColor: theme.border,
+            paddingBottom: insets.bottom + Spacing.md,
+          },
         ]}
       >
-        {Platform.OS === "ios" && (
-          <BlurView
-            intensity={80}
-            tint={isDark ? "dark" : "light"}
-            style={StyleSheet.absoluteFill}
+        {isDownloading && (
+          <Animated.View
+            style={[
+              styles.barProgress,
+              { backgroundColor: theme.text, width: progressWidth },
+            ]}
           />
         )}
-        <View
-          style={[
-            styles.downloadContainerInner,
-            Platform.OS !== "ios" && {
-              backgroundColor: theme.backgroundDefault,
-              borderTopWidth: 1,
-              borderTopColor: theme.border,
+
+        <Pressable
+          onPress={handleDownload}
+          disabled={isDownloading}
+          style={({ pressed }) => [
+            styles.downloadButton,
+            {
+              backgroundColor: downloadSuccess ? theme.success : theme.primary,
             },
+            pressed && !isDownloading && { opacity: 0.88 },
+            isDownloading && { opacity: 0.7 },
           ]}
         >
-          {/* Progress bar background */}
-          {isDownloading && (
-            <View style={styles.progressBarContainer}>
-              <Animated.View
+          {isDownloading ? (
+            <>
+              <ActivityIndicator size="small" color={theme.buttonText} />
+              <ThemedText
                 style={[
-                  styles.progressBar,
-                  {
-                    backgroundColor: theme.primary + "30",
-                    width: progressWidth,
-                  },
+                  Typography.button,
+                  { color: theme.buttonText, marginLeft: Spacing.sm },
                 ]}
-              />
-            </View>
-          )}
-
-          <Animated.View
-            style={{
-              transform: [
-                {
-                  scale: isDownloading
-                    ? 1
-                    : Animated.multiply(buttonScaleAnim, pulseAnim),
-                },
-              ],
-            }}
-          >
-            <Pressable
-              onPress={handleDownload}
-              onPressIn={handleButtonPressIn}
-              onPressOut={handleButtonPressOut}
-              disabled={isDownloading}
-              style={styles.downloadButton}
-            >
-              <LinearGradient
-                colors={
-                  downloadSuccess
-                    ? [theme.success, theme.success]
-                    : isDownloading
-                      ? [theme.primary + "CC", theme.primary + "CC"]
-                      : colorScheme === "dark"
-                        ? Gradients.dark.primary
-                        : Gradients.light.primary
-                }
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.downloadGradient}
               >
-                {renderDownloadButtonContent()}
-              </LinearGradient>
-            </Pressable>
-          </Animated.View>
+                Downloading {downloadProgress}%
+              </ThemedText>
+            </>
+          ) : (
+            <>
+              <Feather
+                name={downloadSuccess ? "check" : "download"}
+                size={17}
+                color={theme.buttonText}
+              />
+              <ThemedText
+                style={[
+                  Typography.button,
+                  { color: theme.buttonText, marginLeft: Spacing.sm },
+                ]}
+              >
+                {downloadSuccess ? "Downloaded" : "Download PDF"}
+              </ThemedText>
+            </>
+          )}
+        </Pressable>
 
-          {/* Helper text */}
-          <View style={styles.helperTextContainer}>
-            <Feather name="lock" size={12} color={theme.textMuted} />
-            <ThemedText
-              style={[
-                Typography.small,
-                { color: theme.textMuted, marginLeft: 4 },
-              ]}
-            >
-              Secure download • No watermarks
-            </ThemedText>
-          </View>
-        </View>
+        <ThemedText tone="muted" type="small" style={styles.barNote}>
+          PDF · no watermark
+        </ThemedText>
       </View>
 
-      {/* Rating Prompt */}
       <RatingModal
         visible={showRatingPrompt}
         onClose={() => setShowRatingPrompt(false)}
       />
 
-      {/* Preview Modal */}
+      {/* Document preview */}
       <Modal
         visible={showPreview}
         animationType="slide"
         presentationStyle="pageSheet"
+        onRequestClose={() => setShowPreview(false)}
       >
         <View
           style={[
-            styles.previewModalContainer,
+            styles.modal,
             { backgroundColor: theme.backgroundRoot },
           ]}
         >
           <View
-            style={[
-              styles.previewModalHeader,
-              { borderBottomColor: theme.border },
-            ]}
+            style={[styles.modalHeader, { borderBottomColor: theme.border }]}
           >
-            <ThemedText style={Typography.h3}>Resume Preview</ThemedText>
+            <ThemedText type="h3">Content</ThemedText>
             <Pressable
               onPress={() => setShowPreview(false)}
-              style={styles.closeButton}
+              hitSlop={10}
+              style={({ pressed }) => pressed && { opacity: PressedOpacity }}
             >
-              <Feather name="x" size={24} color={theme.text} />
+              <Feather name="x" size={22} color={theme.text} />
             </Pressable>
           </View>
 
-          <ScrollView contentContainerStyle={styles.previewContent}>
-            {(() => {
-              try {
-                const data =
-                  typeof resume.improvedText === "string"
-                    ? JSON.parse(resume.improvedText)
-                    : resume.improvedText;
-                return (
-                  <View style={styles.previewPaper}>
-                    {/* Header */}
-                    <View style={styles.previewHeaderSection}>
-                      <ThemedText
-                        style={[Typography.h1, { textAlign: "center" }]}
-                      >
-                        {data.header.name}
-                      </ThemedText>
-                      <ThemedText
-                        style={[
-                          Typography.bodySmall,
-                          { textAlign: "center", color: theme.textSecondary },
-                        ]}
-                      >
-                        {[
-                          data.header.location,
-                          data.header.phone,
-                          data.header.email,
-                          data.header.linkedin,
-                        ]
-                          .filter(Boolean)
-                          .join(" | ")}
-                      </ThemedText>
-                    </View>
-
-                    {/* Summary/Experience */}
-                    <View style={styles.previewSection}>
-                      <ThemedText style={styles.previewSectionTitle}>
-                        WORK EXPERIENCE
-                      </ThemedText>
-                      <View
-                        style={[
-                          styles.previewDivider,
-                          { backgroundColor: theme.border },
-                        ]}
-                      />
-                      {data.experience.map((exp: any, idx: number) => (
-                        <View key={idx} style={styles.previewItem}>
-                          <View style={styles.previewItemHeader}>
-                            <ThemedText style={Typography.h4}>
-                              {exp.role}
-                            </ThemedText>
-                            <ThemedText
-                              style={[
-                                Typography.bodySmall,
-                                { color: theme.textSecondary },
-                              ]}
-                            >
-                              {exp.date}
-                            </ThemedText>
-                          </View>
-                          <ThemedText
-                            style={[
-                              Typography.bodySmall,
-                              { fontWeight: "600" },
-                            ]}
-                          >
-                            {exp.company}
-                          </ThemedText>
-                          {exp.bullets.map((bullet: string, bidx: number) => (
-                            <ThemedText key={bidx} style={styles.previewBullet}>
-                              • {bullet}
-                            </ThemedText>
-                          ))}
-                        </View>
-                      ))}
-                    </View>
-
-                    {/* Education */}
-                    <View style={styles.previewSection}>
-                      <ThemedText style={styles.previewSectionTitle}>
-                        EDUCATION
-                      </ThemedText>
-                      <View
-                        style={[
-                          styles.previewDivider,
-                          { backgroundColor: theme.border },
-                        ]}
-                      />
-                      {data.education.map((edu: any, idx: number) => (
-                        <View key={idx} style={styles.previewItem}>
-                          <View style={styles.previewItemHeader}>
-                            <ThemedText style={Typography.h4}>
-                              {edu.degree}
-                            </ThemedText>
-                            <ThemedText
-                              style={[
-                                Typography.bodySmall,
-                                { color: theme.textSecondary },
-                              ]}
-                            >
-                              {edu.date}
-                            </ThemedText>
-                          </View>
-                          <ThemedText style={Typography.bodySmall}>
-                            {edu.school}
-                          </ThemedText>
-                        </View>
-                      ))}
-                    </View>
-
-                    {/* Skills */}
-                    <View style={styles.previewSection}>
-                      <ThemedText style={styles.previewSectionTitle}>
-                        SKILLS
-                      </ThemedText>
-                      <View
-                        style={[
-                          styles.previewDivider,
-                          { backgroundColor: theme.border },
-                        ]}
-                      />
-                      <ThemedText style={Typography.bodySmall}>
-                        {data.skills}
-                      </ThemedText>
-                    </View>
-                  </View>
-                );
-              } catch (e) {
-                return (
-                  <View style={{ padding: Spacing.xl, alignItems: "center" }}>
-                    <ThemedText style={{ color: theme.textSecondary }}>
-                      Error parsing resume content. You can still download the
-                      PDF.
-                    </ThemedText>
-                  </View>
-                );
-              }
-            })()}
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            <DocumentPreview raw={resume.improvedText} theme={theme} />
           </ScrollView>
         </View>
       </Modal>
@@ -863,191 +501,293 @@ export default function PreviewScreen() {
   );
 }
 
+/** Renders the parsed resume as a document, not as app chrome. */
+function DocumentPreview({ raw, theme }: { raw: unknown; theme: any }) {
+  let data: any;
+  try {
+    data = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch {
+    data = null;
+  }
+
+  if (!data) {
+    return (
+      <View style={styles.emptyState}>
+        <ThemedText tone="secondary">
+          Could not read the resume content. The PDF will still download
+          correctly.
+        </ThemedText>
+      </View>
+    );
+  }
+
+  const header = data.header ?? {};
+  const experience = Array.isArray(data.experience) ? data.experience : [];
+  const education = Array.isArray(data.education) ? data.education : [];
+  const contact = [
+    header.address || header.location,
+    header.phone,
+    header.email,
+    header.linkedin,
+  ]
+    .filter(Boolean)
+    .join("  ·  ");
+
+  const Section = ({
+    title,
+    children,
+  }: {
+    title: string;
+    children: React.ReactNode;
+  }) => (
+    <View style={styles.docSection}>
+      <ThemedText type="overline" tone="secondary">
+        {title}
+      </ThemedText>
+      <View
+        style={[styles.docRule, { backgroundColor: theme.text }]}
+      />
+      {children}
+    </View>
+  );
+
+  return (
+    <View
+      style={[
+        styles.doc,
+        {
+          backgroundColor: theme.backgroundDefault,
+          borderColor: theme.border,
+        },
+      ]}
+    >
+      <View style={styles.docHeader}>
+        <ThemedText type="h2" style={styles.docName}>
+          {header.name || "Your name"}
+        </ThemedText>
+        {!!contact && (
+          <ThemedText
+            tone="secondary"
+            type="bodySmall"
+            style={styles.docContact}
+          >
+            {contact}
+          </ThemedText>
+        )}
+      </View>
+
+      {experience.length > 0 && (
+        <Section title="EXPERIENCE">
+          {experience.map((exp: any, idx: number) => (
+            <View key={idx} style={styles.docEntry}>
+              <View style={styles.docEntryHead}>
+                <ThemedText type="h4" style={styles.docEntryTitle}>
+                  {exp.role}
+                </ThemedText>
+                <ThemedText tone="muted" type="small">
+                  {exp.date}
+                </ThemedText>
+              </View>
+              <ThemedText tone="secondary" type="bodySmall">
+                {[exp.company, exp.location].filter(Boolean).join(" · ")}
+              </ThemedText>
+              {(Array.isArray(exp.bullets) ? exp.bullets : []).map(
+                (bullet: string, bidx: number) => (
+                  <View key={bidx} style={styles.docBullet}>
+                    <ThemedText tone="muted" style={styles.docBulletDot}>
+                      ·
+                    </ThemedText>
+                    <ThemedText type="bodySmall" style={{ flex: 1 }}>
+                      {bullet}
+                    </ThemedText>
+                  </View>
+                ),
+              )}
+            </View>
+          ))}
+        </Section>
+      )}
+
+      {education.length > 0 && (
+        <Section title="EDUCATION">
+          {education.map((edu: any, idx: number) => (
+            <View key={idx} style={styles.docEntry}>
+              <View style={styles.docEntryHead}>
+                <ThemedText type="h4" style={styles.docEntryTitle}>
+                  {edu.degree}
+                </ThemedText>
+                <ThemedText tone="muted" type="small">
+                  {edu.date}
+                </ThemedText>
+              </View>
+              <ThemedText tone="secondary" type="bodySmall">
+                {[edu.school, edu.location].filter(Boolean).join(" · ")}
+              </ThemedText>
+            </View>
+          ))}
+        </Section>
+      )}
+
+      {!!data.skills && (
+        <Section title="SKILLS">
+          <ThemedText type="bodySmall">
+            {Array.isArray(data.skills) ? data.skills.join(", ") : data.skills}
+          </ThemedText>
+        </Section>
+      )}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: { paddingHorizontal: Spacing.lg, paddingBottom: 160 },
-  headerButton: { padding: Spacing.sm },
-  successContainer: { alignItems: "center", paddingVertical: Spacing["3xl"] },
-  successIcon: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    alignItems: "center",
-    justifyContent: "center",
+  container: {
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
+    paddingBottom: 150,
   },
-  successIconInner: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    alignItems: "center",
-    justifyContent: "center",
+  headerButton: {
+    paddingHorizontal: Spacing.xs,
   },
-  statsContainer: {
-    flexDirection: "row",
-    gap: Spacing.md,
-    marginBottom: Spacing.xl,
-  },
-  statCard: {
-    flex: 1,
-    padding: Spacing.lg,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    alignItems: "center",
-  },
-  statIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: Spacing.sm,
-  },
-  actionsContainer: { gap: Spacing.md },
-  actionCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: Spacing.lg,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-  },
-  actionIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: Spacing.md,
+  emptyState: {
+    padding: Spacing.xl,
   },
 
-  // Enhanced download button styles
-  downloadContainer: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
+  // Status
+  status: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginBottom: Spacing.xl,
+  },
+  statusMark: {
+    width: 28,
+    height: 28,
+    borderRadius: BorderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 3,
+  },
+  statusText: {
+    flex: 1,
+    marginLeft: Spacing.md,
+  },
+
+  // Grouped lists
+  group: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.lg,
     overflow: "hidden",
   },
-  downloadContainerInner: {
+  specRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+  },
+  specValue: {
+    fontWeight: "500",
+    flexShrink: 1,
+    marginLeft: Spacing.lg,
+    textAlign: "right",
+  },
+  actionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.lg,
+  },
+  actionLabel: {
+    flex: 1,
+    marginLeft: Spacing.md,
+  },
+
+  // Bottom bar
+  bar: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderTopWidth: 1,
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.lg,
   },
-  progressBarContainer: {
+  barProgress: {
     position: "absolute",
     top: 0,
     left: 0,
-    right: 0,
-    height: 3,
-    backgroundColor: "transparent",
-    overflow: "hidden",
-  },
-  progressBar: {
-    height: "100%",
-    borderRadius: 2,
+    height: 2,
   },
   downloadButton: {
-    height: 60,
-    borderRadius: BorderRadius.lg,
-    overflow: "hidden",
-    ...Shadows.glow,
+    height: Spacing.buttonHeight,
+    borderRadius: BorderRadius.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  downloadGradient: {
+  barNote: {
+    textAlign: "center",
+    marginTop: Spacing.sm,
+  },
+
+  // Modal
+  modal: {
     flex: 1,
+  },
+  modalHeader: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: Spacing.xl,
-  },
-  buttonContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  buttonText: {
-    color: "#FFF",
-    marginLeft: Spacing.md,
-  },
-  downloadIconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  successCheckContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,0.3)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  downloadingTextContainer: {
-    marginLeft: Spacing.md,
-    alignItems: "flex-start",
-  },
-  progressText: {
-    color: "rgba(255,255,255,0.8)",
-    marginTop: 2,
-  },
-  fileTypeBadge: {
-    marginLeft: Spacing.md,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 4,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    borderRadius: BorderRadius.xs,
-  },
-  fileTypeText: {
-    color: "#FFF",
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 0.5,
-  },
-  helperTextContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: Spacing.md,
-    paddingBottom: Spacing.xs,
-  },
-  // Preview Modal Styles
-  previewModalContainer: { flex: 1 },
-  previewModalHeader: {
-    flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    padding: Spacing.lg,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.lg,
     borderBottomWidth: 1,
   },
-  closeButton: { padding: Spacing.sm },
-  previewContent: { padding: Spacing.lg },
-  previewPaper: {
-    padding: Spacing.xl,
-    backgroundColor: "#FFF", // Always white like paper
+  modalBody: {
+    padding: Spacing.lg,
+  },
+
+  // Document
+  doc: {
+    borderWidth: 1,
     borderRadius: BorderRadius.sm,
-    ...Shadows.medium,
+    padding: Spacing.xl,
   },
-  previewHeaderSection: { marginBottom: Spacing.xl },
-  previewSection: { marginBottom: Spacing.lg },
-  previewSectionTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#000",
-    letterSpacing: 1.2,
-    marginBottom: 4,
-  },
-  previewDivider: { height: 1, marginBottom: Spacing.md },
-  previewItem: { marginBottom: Spacing.md },
-  previewItemHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  docHeader: {
     alignItems: "center",
-    marginBottom: 2,
+    paddingBottom: Spacing.lg,
   },
-  previewBullet: {
-    fontSize: 12,
-    color: "#333",
-    lineHeight: 18,
-    marginTop: 2,
-    paddingLeft: 4,
+  docName: {
+    textAlign: "center",
+  },
+  docContact: {
+    textAlign: "center",
+    marginTop: Spacing.xs,
+  },
+  docSection: {
+    marginTop: Spacing.lg,
+  },
+  docRule: {
+    height: 1,
+    marginTop: Spacing.xs,
+    marginBottom: Spacing.md,
+    opacity: 0.85,
+  },
+  docEntry: {
+    marginBottom: Spacing.lg,
+  },
+  docEntryHead: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+  },
+  docEntryTitle: {
+    flex: 1,
+    marginRight: Spacing.sm,
+  },
+  docBullet: {
+    flexDirection: "row",
+    marginTop: Spacing.xs,
+  },
+  docBulletDot: {
+    width: 12,
   },
 });

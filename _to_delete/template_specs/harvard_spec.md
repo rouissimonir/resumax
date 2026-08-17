@@ -64,6 +64,19 @@ Bullets: Each bullet ≤2 lines. Use 3–6 bullets per position
 - **Consistency**: Keep same format throughout document
 - **Alignment**: Right-aligned
 
+## Content Integrity Rules (CRITICAL)
+
+### Never Fabricate
+- **NEVER invent metrics, numbers, or percentages** not present in the original resume
+- Quantify only with figures the candidate actually provided; otherwise describe impact qualitatively ("significantly reduced load time" → better: rephrase without a fake number)
+- **NEVER add** skills, employers, degrees, certifications, or dates that are not in the source
+- **NEVER change** dates, job titles, company names, or contact details
+
+### Preserve
+- Keep the resume in its **original language** (do not translate unless asked)
+- Keep all factual claims traceable to the original text
+- Omit sections the original resume doesn't have — do not pad with placeholders
+
 ## Content Style Rules
 
 ### Tense
@@ -120,6 +133,13 @@ Bullets: Each bullet ≤2 lines. Use 3–6 bullets per position
 ### Keywords
 - Include relevant keywords from job description
 - Natural placement in bullets/skills
+- Spell out acronyms once alongside the abbreviation: "Applicant Tracking System (ATS)"
+- Use the exact job-title wording where truthful (e.g. "Software Engineer" vs "SWE")
+
+### Dates & Parsing Safety
+- One consistent date format everywhere (MM/YYYY recommended for ATS parsing)
+- No date ranges inside tables or right-aligned tabs made of spaces — use proper alignment
+- Standard bullet characters only (• or -), never custom glyphs or emoji
 
 ### Format
 - Selectable text (not images)

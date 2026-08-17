@@ -12,6 +12,9 @@
       "android": {
         "buildType": "apk"
       },
+      "ios": {
+        "simulator": true
+      },
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_API_URL": "https://resumee-nhrs.onrender.com"
@@ -21,6 +24,7 @@
       "android": {
         "buildType": "app-bundle"
       },
+      "ios": {},
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_API_URL": "https://resumee-nhrs.onrender.com"
