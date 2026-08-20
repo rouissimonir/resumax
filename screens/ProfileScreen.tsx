@@ -13,7 +13,9 @@ import { Feather } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { LinearGradient } from "expo-linear-gradient";
+import Constants from "expo-constants";
 import { ProfileStackParamList } from "@/navigation/ProfileStackNavigator";
+import { LEGAL_URLS, openLegalUrl } from "@/constants/legal";
 
 import { ScreenScrollView } from "@/components/ScreenScrollView";
 import { ThemedText } from "@/components/ThemedText";
@@ -32,6 +34,9 @@ import {
   Animations,
 } from "@/constants/theme";
 import { useUser } from "@/contexts/UserContext";
+
+/** Single source of truth is app.json's `expo.version`. */
+const APP_VERSION = Constants.expoConfig?.version ?? "—";
 
 export default function ProfileScreen() {
   const [cvTemplates, setCvTemplates] = useState<
@@ -360,18 +365,42 @@ export default function ProfileScreen() {
           </ThemedText>
 
           {[
-            { icon: "info", label: "Version", value: "1.0.0" },
-            { icon: "shield", label: "Privacy Policy", chevron: true },
-            { icon: "file-text", label: "Terms of Service", chevron: true },
-          ].map((item, index) => (
+            // Read from app.json rather than a hardcoded string: this said
+            // "1.0.0" while the app was actually on 1.2.6, which makes bug
+            // reports useless because you can't tell which build a user is on.
+            {
+              icon: "info",
+              label: "Version",
+              value: APP_VERSION,
+            },
+            {
+              icon: "shield",
+              label: "Privacy Policy",
+              chevron: true,
+              url: LEGAL_URLS.privacy,
+            },
+            {
+              icon: "file-text",
+              label: "Terms of Service",
+              chevron: true,
+              url: LEGAL_URLS.terms,
+            },
+          ]
+            // A row with no destination is worse than no row — reviewers tap
+            // these. Drop any link whose URL isn't configured yet.
+            .filter((item) => !item.chevron || !!item.url)
+            .map((item, index) => (
             <Pressable
               key={index}
-              style={[
+              onPress={item.url ? () => openLegalUrl(item.url) : undefined}
+              disabled={!item.url}
+              style={({ pressed }) => [
                 styles.settingCard,
                 {
                   backgroundColor: theme.backgroundDefault,
                   borderColor: theme.border,
                 },
+                pressed && item.url ? { opacity: 0.7 } : null,
               ]}
             >
               <View style={styles.settingRow}>

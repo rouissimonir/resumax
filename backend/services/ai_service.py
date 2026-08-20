@@ -444,26 +444,15 @@ async def improve_resume_text(
         {clean_text}
         """
 
-        # Choose the provider based on model name
-        if "llama" in model_name.lower():
-            logger.info("Using GROQ/LLAMA Provider")
-            from groq import Groq
-            client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-            
-            # Groq is sync, run in executor
-            loop = asyncio.get_event_loop()
-            chat_completion = await loop.run_in_executor(
-                _executor, 
-                lambda: client.chat.completions.create(
-                    messages=[{"role": "user", "content": prompt}],
-                    model=model_name,
-                    response_format={"type": "json_object"},
-                    temperature=0.0
-                )
-            )
-            response_text = chat_completion.choices[0].message.content
-            
-        else:
+        # Choose the provider based on model name. Deliberately an allowlist
+        # keyed on Gemini's naming ("gemini-*") rather than a Groq-side
+        # blacklist keyed on "llama" — Groq's own catalog moves fast (Llama
+        # 3.3 70B was deprecated days after this was first written, in favor
+        # of openai/gpt-oss-120b and qwen/... models whose names don't
+        # contain "llama"), and a substring check tied to one model family
+        # silently misroutes to Gemini instead of erroring when the model
+        # changes. Anything not explicitly Gemini goes to Groq.
+        if model_name.lower().startswith("gemini"):
             logger.info("Using GOOGLE/GEMINI Provider")
             api_key = os.getenv("GEMINI_API_KEY", "")
             if not api_key:
@@ -477,12 +466,30 @@ async def improve_resume_text(
                     "response_mime_type": "application/json",
                 }
             )
-            
+
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 _executor, model.generate_content, prompt
             )
             response_text = response.text
+
+        else:
+            logger.info("Using GROQ Provider")
+            from groq import Groq
+            client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+            # Groq is sync, run in executor
+            loop = asyncio.get_event_loop()
+            chat_completion = await loop.run_in_executor(
+                _executor,
+                lambda: client.chat.completions.create(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=model_name,
+                    response_format={"type": "json_object"},
+                    temperature=0.0
+                )
+            )
+            response_text = chat_completion.choices[0].message.content
 
         logger.info("✓ Received response from AI")
         

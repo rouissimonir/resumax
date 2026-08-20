@@ -4,7 +4,6 @@ import {
   StyleSheet,
   Pressable,
   Animated,
-  Dimensions,
   ActivityIndicator,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
@@ -14,7 +13,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ScreenScrollView } from "@/components/ScreenScrollView";
 import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
-import { useRevenueCat } from "@/contexts/RevenueCatContext";
+import {
+  useRevenueCat,
+  isLifetimePackage,
+} from "@/contexts/RevenueCatContext";
 import {
   Spacing,
   BorderRadius,
@@ -24,22 +26,31 @@ import {
   Animations,
 } from "@/constants/theme";
 
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
-
 const FEATURES = [
   { icon: "zap", text: "AI-powered resume enhancement" },
-  { icon: "file-text", text: "Harvard-style PDF formatting" },
+  { icon: "file-text", text: "Every CV format, including Europass" },
   { icon: "download", text: "Unlimited downloads" },
   { icon: "shield", text: "ATS-optimized output" },
 ];
 
+/** Alias so the JSX below stays terse; source of truth lives in the context. */
+const isLifetime = isLifetimePackage;
+
 export default function PricingScreen() {
   const { theme, colorScheme } = useTheme();
-  const { currentOffering, purchasePackage, isPro, isLoading, restorePurchases } = useRevenueCat();
+  const {
+    packages,
+    purchasePackage,
+    isPro,
+    isLoading,
+    restorePurchases,
+    ownsLifetime,
+    passExpiresAt,
+  } = useRevenueCat();
   const insets = useSafeAreaInsets();
   const [isPurchasing, setIsPurchasing] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
 
@@ -58,11 +69,24 @@ export default function PricingScreen() {
     ]).start();
   }, []);
 
+  // Default the selection to the lifetime tier when one exists — it's the
+  // better deal for anyone who'll job hunt more than a couple of times, and
+  // pre-selecting it makes the pass read as the budget option rather than
+  // the default.
+  useEffect(() => {
+    if (selectedId || packages.length === 0) return;
+    const lifetime = packages.find(isLifetime);
+    setSelectedId((lifetime ?? packages[0]).identifier);
+  }, [packages, selectedId]);
+
+  const selected =
+    packages.find((p) => p.identifier === selectedId) ?? packages[0] ?? null;
+
   const handlePurchase = async () => {
-    if (!currentOffering) return;
+    if (!selected) return;
     setIsPurchasing(true);
     try {
-      await purchasePackage(currentOffering);
+      await purchasePackage(selected);
     } catch (error) {
       console.error(error);
     } finally {
@@ -72,32 +96,50 @@ export default function PricingScreen() {
 
   if (isLoading) {
     return (
-      <View style={[styles.container, styles.center, { backgroundColor: theme.backgroundRoot }]}>
+      <View
+        style={[
+          styles.container,
+          styles.center,
+          { backgroundColor: theme.backgroundRoot },
+        ]}
+      >
         <ActivityIndicator size="large" color={theme.primary} />
       </View>
-    )
+    );
   }
+
+  // Already paid — show status instead of a purchase form.
+  const proSubtitle = ownsLifetime
+    ? "You have lifetime access. Thanks for the support."
+    : passExpiresAt
+      ? `Your pass is active until ${passExpiresAt.toLocaleDateString()}.`
+      : "Enjoy unlimited access to all features.";
 
   return (
     <View style={[styles.container, { backgroundColor: theme.backgroundRoot }]}>
       <ScreenScrollView>
         <View style={styles.content}>
-          {/* Header */}
           <Animated.View style={[styles.header, { opacity: fadeAnim }]}>
-            <ThemedText style={[Typography.h1, styles.title, { textAlign: 'center' }]}>
-              {isPro ? "You are a Pro Member" : "Upgrade to Pro"}
+            <ThemedText
+              style={[Typography.h1, styles.title, { textAlign: "center" }]}
+            >
+              {isPro ? "You're all set" : "Unlock unlimited CVs"}
             </ThemedText>
-            <ThemedText style={[Typography.body, { color: theme.textSecondary, textAlign: "center" }]}>
-              {isPro ? "Enjoy unlimited access to all features." : "Unlock the full potential of your career with Resumax Pro."}
+            <ThemedText
+              style={[
+                Typography.body,
+                { color: theme.textSecondary, textAlign: "center" },
+              ]}
+            >
+              {isPro
+                ? proSubtitle
+                : "No subscription. Pay once for a week, or once for good."}
             </ThemedText>
           </Animated.View>
 
-          {/* Features */}
-          <Animated.View
-            style={[styles.featuresSection, { opacity: fadeAnim }]}
-          >
+          <Animated.View style={[styles.featuresSection, { opacity: fadeAnim }]}>
             <ThemedText style={[Typography.h3, { marginBottom: Spacing.lg }]}>
-              What's included in Pro
+              What you get
             </ThemedText>
             {FEATURES.map((feature, index) => (
               <View key={index} style={styles.featureRow}>
@@ -120,45 +162,106 @@ export default function PricingScreen() {
             ))}
           </Animated.View>
 
-          {/* Pricing Card */}
-          {!isPro && currentOffering && (
-            <Animated.View
-              style={[
-                styles.pricingCard,
-                {
-                  backgroundColor: theme.backgroundDefault,
-                  borderColor: theme.primary,
-                  transform: [{ translateY: slideAnim }]
-                },
-                Shadows.glow
-              ]}
-            >
-              <View style={styles.cardHeader}>
-                <ThemedText style={Typography.h2}>{currentOffering.product.title}</ThemedText>
-                <View style={[styles.badge, { backgroundColor: theme.primary }]}>
-                  <ThemedText style={[Typography.caption, { color: '#FFF' }]}>BEST VALUE</ThemedText>
-                </View>
-              </View>
-              <ThemedText style={[Typography.hero, { color: theme.primary, marginVertical: Spacing.md }]}>
-                {currentOffering.product.priceString}
-              </ThemedText>
-              <ThemedText style={[Typography.body, { color: theme.textSecondary }]}>
-                {currentOffering.product.description}
+          {/* Tier options */}
+          {!isPro && packages.length > 0 && (
+            <Animated.View style={{ transform: [{ translateY: slideAnim }] }}>
+              {packages.map((pack) => {
+                const active = selected?.identifier === pack.identifier;
+                const lifetime = isLifetime(pack);
+                return (
+                  <Pressable
+                    key={pack.identifier}
+                    onPress={() => setSelectedId(pack.identifier)}
+                    style={[
+                      styles.tierCard,
+                      {
+                        backgroundColor: theme.backgroundDefault,
+                        borderColor: active ? theme.primary : theme.border,
+                        borderWidth: active ? 2 : 1,
+                      },
+                      active && Shadows.glow,
+                    ]}
+                  >
+                    <View style={styles.tierHead}>
+                      <View style={{ flex: 1 }}>
+                        <ThemedText style={Typography.h3}>
+                          {pack.product.title}
+                        </ThemedText>
+                        <ThemedText
+                          type="caption"
+                          style={{ color: theme.textSecondary, marginTop: 2 }}
+                        >
+                          {lifetime
+                            ? "One payment, yours forever"
+                            : `Full access for 7 days`}
+                        </ThemedText>
+                      </View>
+                      {lifetime && (
+                        <View
+                          style={[
+                            styles.badge,
+                            { backgroundColor: theme.primary },
+                          ]}
+                        >
+                          <ThemedText
+                            style={[Typography.caption, { color: "#FFF" }]}
+                          >
+                            BEST VALUE
+                          </ThemedText>
+                        </View>
+                      )}
+                    </View>
+
+                    <View style={styles.tierPriceRow}>
+                      <ThemedText
+                        style={[Typography.h1, { color: theme.primary }]}
+                      >
+                        {pack.product.priceString}
+                      </ThemedText>
+                      <View
+                        style={[
+                          styles.radio,
+                          {
+                            borderColor: active ? theme.primary : theme.border,
+                            backgroundColor: active
+                              ? theme.primary
+                              : "transparent",
+                          },
+                        ]}
+                      >
+                        {active && (
+                          <Feather name="check" size={12} color="#FFF" />
+                        )}
+                      </View>
+                    </View>
+                  </Pressable>
+                );
+              })}
+
+              <ThemedText
+                type="caption"
+                style={{
+                  color: theme.textSecondary,
+                  textAlign: "center",
+                  marginTop: Spacing.sm,
+                }}
+              >
+                Neither option renews automatically. You will not be charged again.
               </ThemedText>
             </Animated.View>
           )}
 
-          {!isPro && !currentOffering && (
+          {!isPro && packages.length === 0 && (
             <View style={styles.errorContainer}>
-              <ThemedText style={{ color: theme.textSecondary }}>No packages available. Please try again later.</ThemedText>
+              <ThemedText style={{ color: theme.textSecondary }}>
+                No plans available right now. Please try again later.
+              </ThemedText>
             </View>
           )}
-
         </View>
       </ScreenScrollView>
 
-      {/* Footer Actions */}
-      {!isPro && currentOffering && (
+      {!isPro && selected && (
         <View
           style={[
             styles.purchaseContainer,
@@ -190,12 +293,19 @@ export default function PricingScreen() {
               <ThemedText style={[Typography.button, { color: "#FFF" }]}>
                 {isPurchasing
                   ? "Processing..."
-                  : `Subscribe for ${currentOffering.product.priceString}`}
+                  : `Continue — ${selected.product.priceString}`}
               </ThemedText>
             </LinearGradient>
           </Pressable>
-          <Pressable onPress={restorePurchases} style={{ marginTop: Spacing.md, alignItems: 'center' }}>
-            <ThemedText style={[Typography.caption, { color: theme.textSecondary }]}>Restore Purchases</ThemedText>
+          <Pressable
+            onPress={restorePurchases}
+            style={{ marginTop: Spacing.md, alignItems: "center" }}
+          >
+            <ThemedText
+              style={[Typography.caption, { color: theme.textSecondary }]}
+            >
+              Restore Purchases
+            </ThemedText>
           </Pressable>
         </View>
       )}
@@ -208,35 +318,47 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   center: {
-    justifyContent: 'center',
-    alignItems: 'center'
+    justifyContent: "center",
+    alignItems: "center",
   },
   content: {
     paddingHorizontal: Spacing.lg,
-    paddingBottom: 120,
+    paddingBottom: 140,
   },
   header: {
     alignItems: "center",
     marginVertical: Spacing["2xl"],
   },
   title: {
-    marginBottom: Spacing.sm
+    marginBottom: Spacing.sm,
   },
-  pricingCard: {
+  tierCard: {
     borderRadius: BorderRadius.lg,
-    padding: Spacing.xl,
-    borderWidth: 2,
-    marginBottom: Spacing.xl
+    padding: Spacing.lg,
+    marginBottom: Spacing.md,
   },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
+  tierHead: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+  },
+  tierPriceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: Spacing.md,
+  },
+  radio: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
   },
   badge: {
     paddingHorizontal: Spacing.sm,
     paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.full
+    borderRadius: BorderRadius.full,
   },
   featuresSection: {
     marginBottom: Spacing["2xl"],
@@ -276,6 +398,6 @@ const styles = StyleSheet.create({
   },
   errorContainer: {
     padding: Spacing.xl,
-    alignItems: 'center'
-  }
+    alignItems: "center",
+  },
 });

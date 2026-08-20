@@ -3,17 +3,17 @@ import {
   View,
   StyleSheet,
   Pressable,
-  ActivityIndicator,
-  Modal,
   Alert,
   Animated,
   Image,
   ScrollView,
+  Modal,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as DocumentPicker from "expo-document-picker";
+import * as ImagePicker from "expo-image-picker";
 
 import { RatingModal } from "@/components/RatingModal";
 import { ScreenScrollView } from "@/components/ScreenScrollView";
@@ -31,6 +31,7 @@ import { useResumes } from "@/contexts/ResumeContext";
 import { HomeStackParamList } from "@/navigation/HomeStackNavigator";
 import { resumeApi, CVTemplate } from "@/services/resumeApi";
 import { usePreferences } from "@/contexts/PreferencesContext";
+import { LogoLoading, LogoEmptyState } from "@/components/LogoLoadingState";
 
 type NavigationProp = NativeStackNavigationProp<HomeStackParamList, "Upload">;
 
@@ -56,6 +57,7 @@ export default function UploadScreen() {
     name: string;
     uri: string;
   } | null>(null);
+  const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
   const [processingStage, setProcessingStage] = useState<string>("");
   const [templates, setTemplates] = useState<CVTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] =
@@ -114,8 +116,32 @@ export default function UploadScreen() {
       if (result.canceled) return;
       const file = result.assets[0];
       setSelectedFile({ name: file.name, uri: file.uri });
+      setSelectedPhoto(null); // new resume, previous photo no longer applies
     } catch (error) {
       Alert.alert("Error", "Could not open that file.");
+    }
+  };
+
+  const pickPhoto = async () => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          "Photo access needed",
+          "Enable photo library access in Settings to add a headshot.",
+        );
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+      if (result.canceled) return;
+      setSelectedPhoto(result.assets[0].uri);
+    } catch (error) {
+      Alert.alert("Error", "Could not select that photo.");
     }
   };
 
@@ -161,7 +187,7 @@ export default function UploadScreen() {
         selectedFile.uri,
         selectedFile.name,
         selectedTemplate,
-        null,
+        selectedTemplate === "europass" ? selectedPhoto : null,
         {
           cvLanguage: preferences.cvLanguage,
           targetRole: preferences.targetRole,
@@ -357,6 +383,54 @@ export default function UploadScreen() {
                 </View>
               )}
 
+              {/* Photo — Europass only; every other format ignores it. */}
+              {selectedTemplate === "europass" && (
+                <View style={styles.section}>
+                  <ThemedText type="overline" tone="muted">
+                    PHOTO (OPTIONAL)
+                  </ThemedText>
+                  <Pressable
+                    onPress={pickPhoto}
+                    style={({ pressed }) => [
+                      styles.photoBox,
+                      {
+                        borderColor: selectedPhoto ? theme.primary : theme.border,
+                        backgroundColor: pressed
+                          ? theme.backgroundSecondary
+                          : theme.backgroundDefault,
+                      },
+                    ]}
+                  >
+                    {selectedPhoto ? (
+                      <>
+                        <Image
+                          source={{ uri: selectedPhoto }}
+                          style={styles.photoPreview}
+                          resizeMode="cover"
+                        />
+                        <Pressable
+                          onPress={() => setSelectedPhoto(null)}
+                          style={styles.photoRemove}
+                          hitSlop={10}
+                        >
+                          <Feather name="x" size={14} color={theme.buttonText} />
+                        </Pressable>
+                      </>
+                    ) : (
+                      <View style={styles.photoPlaceholder}>
+                        <Feather name="camera" size={22} color={theme.textSecondary} />
+                        <ThemedText type="h4" style={{ marginTop: Spacing.md }}>
+                          Add a photo
+                        </ThemedText>
+                        <ThemedText tone="muted" type="bodySmall" style={{ marginTop: 2 }}>
+                          Europass convention — skip if you'd rather not
+                        </ThemedText>
+                      </View>
+                    )}
+                  </Pressable>
+                </View>
+              )}
+
               <Pressable
                 onPress={processResume}
                 style={({ pressed }) => [
@@ -438,50 +512,12 @@ export default function UploadScreen() {
         onClose={() => setShowRatingModal(false)}
       />
 
-      {/* Processing */}
-      <Modal visible={currentProcessingId !== null} transparent animationType="fade">
-        <View style={styles.overlay}>
-          <View
-            style={[
-              styles.processingCard,
-              {
-                backgroundColor: theme.backgroundDefault,
-                borderColor: theme.border,
-              },
-            ]}
-          >
-            <View style={styles.processingHead}>
-              <ActivityIndicator size="small" color={theme.text} />
-              <ThemedText type="h3" style={{ marginLeft: Spacing.md }}>
-                Working on it
-              </ThemedText>
-            </View>
-
-            <View
-              style={[
-                styles.track,
-                { backgroundColor: theme.backgroundTertiary },
-              ]}
-            >
-              <View
-                style={[
-                  styles.fill,
-                  { backgroundColor: theme.text, width: `${progress}%` },
-                ]}
-              />
-            </View>
-
-            <View style={styles.processingFoot}>
-              <ThemedText tone="secondary" type="bodySmall" style={{ flex: 1 }}>
-                {processingStage}
-              </ThemedText>
-              <ThemedText tone="muted" type="bodySmall">
-                {progress}%
-              </ThemedText>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      {/* Processing with animated logo */}
+      <LogoLoading
+        visible={currentProcessingId !== null}
+        message={processingStage || "Improving your resume"}
+        submessage={`${progress}% complete`}
+      />
 
       {/* Template preview */}
       <Modal
@@ -651,39 +687,6 @@ const styles = StyleSheet.create({
     borderTopWidth: Hairline,
   },
 
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: Spacing.xl,
-  },
-  processingCard: {
-    width: "100%",
-    maxWidth: 340,
-    borderWidth: 1,
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.xl,
-  },
-  processingHead: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: Spacing.lg,
-  },
-  track: {
-    height: 3,
-    borderRadius: BorderRadius.full,
-    overflow: "hidden",
-  },
-  fill: {
-    height: "100%",
-    borderRadius: BorderRadius.full,
-  },
-  processingFoot: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: Spacing.md,
-  },
 
   modal: {
     flex: 1,
@@ -707,5 +710,35 @@ const styles = StyleSheet.create({
   largePreviewImage: {
     width: "100%",
     height: 420,
+  },
+
+  photoBox: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.lg,
+    overflow: "hidden",
+    aspectRatio: 1,
+    maxWidth: 160,
+    marginTop: Spacing.md,
+  },
+  photoPlaceholder: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: Spacing.md,
+  },
+  photoPreview: {
+    width: "100%",
+    height: "100%",
+  },
+  photoRemove: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    width: 28,
+    height: 28,
+    borderRadius: BorderRadius.full,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

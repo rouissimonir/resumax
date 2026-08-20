@@ -16,6 +16,8 @@ import * as Google from "expo-auth-session/providers/google";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { LEGAL_URLS, openLegalUrl } from "@/constants/legal";
+
 import GoogleSignInButton from "@/components/GoogleSignInButton";
 import { useTheme } from "@/hooks/useTheme";
 import {
@@ -230,8 +232,28 @@ export default function LoginScreen() {
       <View
         style={[styles.footer, { paddingBottom: insets.bottom + Spacing.lg }]}
       >
+        {/* The consent line has to be actionable, not decorative: it claims
+            the user agreed to a policy, so the policy must be one tap away.
+            Only names documents that actually have a URL configured. */}
         <Text style={styles.footerText}>
-          By continuing, you agree to our Terms and Privacy Policy
+          By continuing, you agree to our{" "}
+          {LEGAL_URLS.terms ? (
+            <>
+              <Text
+                style={styles.footerLink}
+                onPress={() => openLegalUrl(LEGAL_URLS.terms)}
+              >
+                Terms
+              </Text>
+              {" and "}
+            </>
+          ) : null}
+          <Text
+            style={styles.footerLink}
+            onPress={() => openLegalUrl(LEGAL_URLS.privacy)}
+          >
+            Privacy Policy
+          </Text>
         </Text>
       </View>
     </View>
@@ -285,5 +307,10 @@ const styles = StyleSheet.create({
   },
   footer: { alignItems: "center", paddingHorizontal: Spacing.xl },
   buttonText: { color: "#E2E8F0", fontSize: 16, fontWeight: "bold" },
-  footerText: { color: "#718096", fontSize: 12 },
+  footerText: { color: "#718096", fontSize: 12, textAlign: "center" },
+  footerLink: {
+    color: "#A0AEC0",
+    fontSize: 12,
+    textDecorationLine: "underline",
+  },
 });

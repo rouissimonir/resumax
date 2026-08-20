@@ -43,7 +43,13 @@ export default function PreviewScreen() {
   const route = useRoute<PreviewRouteProp>();
   const navigation = useNavigation<NavigationProp>();
   const { getResumeById } = useResumes();
-  const { isPro, userId } = useRevenueCat();
+  const {
+    isPro,
+    userId,
+    canDownload,
+    freeDownloadUsed,
+    consumeFreeDownload,
+  } = useRevenueCat();
   const insets = useSafeAreaInsets();
 
   const [isDownloading, setIsDownloading] = useState(false);
@@ -152,16 +158,33 @@ export default function PreviewScreen() {
     );
   }
 
+  /**
+   * Spend the one-off free download, but only if that's what actually paid
+   * for this file. Pro users must never burn it — otherwise a subscriber
+   * who later lapses would find their free credit already gone.
+   *
+   * Called only after the PDF has genuinely landed, so a failed generate or
+   * download leaves the credit intact and the user can retry.
+   */
+  const settleFreeDownload = async () => {
+    if (!isPro && !freeDownloadUsed) {
+      await consumeFreeDownload();
+    }
+  };
+
   const handleDownload = async () => {
     try {
       setIsDownloading(true);
       setDownloadSuccess(false);
       setDownloadProgress(0);
 
-      if (!isPro) {
+      // Every install gets one free download. Gate on canDownload rather
+      // than isPro so that first one gets through without a purchase.
+      if (!canDownload) {
         Alert.alert(
-          "Pro required",
-          "Downloading your Harvard-style resume requires Pro.",
+          "You've used your free CV",
+          "Tailoring your CV to each job is what actually moves the needle — " +
+            "unlock unlimited downloads to keep going.",
           [
             { text: "Not now", style: "cancel" },
             {
@@ -195,6 +218,7 @@ export default function PreviewScreen() {
         if (!response.ok) throw new Error("Failed to download PDF");
         window.open(downloadUrl, "_blank");
 
+        await settleFreeDownload();
         setDownloadSuccess(true);
         setTimeout(() => setDownloadSuccess(false), 3000);
         return;
@@ -218,6 +242,8 @@ export default function PreviewScreen() {
 
       const result = await downloadResumable.downloadAsync();
       if (!result || result.status !== 200) throw new Error("Download failed");
+
+      await settleFreeDownload();
 
       setDownloadSuccess(true);
 
@@ -456,8 +482,14 @@ export default function PreviewScreen() {
           )}
         </Pressable>
 
+        {/* Tell the user which "bucket" this download comes out of before
+            they tap, rather than surprising them with a paywall after. */}
         <ThemedText tone="muted" type="small" style={styles.barNote}>
-          PDF · no watermark
+          {isPro
+            ? "PDF · no watermark"
+            : freeDownloadUsed
+              ? "PDF · unlock to download"
+              : "PDF · your free CV, no watermark"}
         </ThemedText>
       </View>
 

@@ -1,7 +1,18 @@
 import Constants from "expo-constants";
 
-// Production backend URL
-const PRODUCTION_API_URL = "http://localhost:8000";
+/**
+ * Last-resort backend URL for a release build.
+ *
+ * Builds normally get this from EXPO_PUBLIC_API_URL, which eas.json sets for
+ * the preview and production profiles. This constant only matters when that
+ * env var is somehow absent — and it used to be "http://localhost:8000",
+ * which meant a misconfigured release build would silently try to reach a
+ * server on the phone itself. iOS App Transport Security also blocks
+ * cleartext http:// outright, so the failure surfaced as an opaque network
+ * error rather than anything diagnosable. Pointing it at the real host makes
+ * a missing env var a non-event instead of a broken release.
+ */
+const PRODUCTION_API_URL = "https://resumee-nhrs.onrender.com";
 
 const getBaseUrl = () => {
   // 1. Check for environment variable first (set in eas.json for builds)
