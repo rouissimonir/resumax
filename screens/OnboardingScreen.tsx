@@ -389,8 +389,12 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   footer: {
-    flex: 1,
-    justifyContent: "space-between",
+    // No flex here on purpose: this sits after questionsBody (flex: 1) in the
+    // same column, so it only needs its own content height. It previously
+    // had flex: 1 too, which made it claim half the remaining screen height
+    // — space-between then spread "Done" and "Skip" across that whole extra
+    // block instead of sitting near the actual bottom of the screen.
+    justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 20,
     paddingBottom: 50,

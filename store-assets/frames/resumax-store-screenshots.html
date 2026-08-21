@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resumax — App Store Screenshots</title>
+
+<!-- Tailwind Play CDN (JIT, arbitrary values enabled) -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- Inter. Falls back to the platform UI face if the network is unavailable. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'SF Pro Display',
+                 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+        },
+      },
+    },
+  }
+</script>
+
+<style>
+  /*
+   * Each .frame is 430 x 932 CSS px — exactly one third of 1290 x 2796, the
+   * iPhone 6.9" App Store size. Exporting at deviceScaleFactor 3 therefore
+   * lands on the required pixel dimensions with no resampling.
+   *
+   * Everything else is Tailwind utilities, per the brief.
+   */
+  :root { --frame-w: 430px; --frame-h: 932px; }
+
+  body { font-family: Inter, -apple-system, BlinkMacSystemFont, 'SF Pro Display',
+         'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
+
+  .frame {
+    width: var(--frame-w);
+    height: var(--frame-h);
+    /* Prevents subpixel seams along the bleed edge when rasterised at 3x. */
+    transform: translateZ(0);
+  }
+
+  /* Export mode: the grid chrome and the preview card radius are presentation
+     only. App Store uploads must be full-bleed rectangles with square corners. */
+  body.export { background: transparent; padding: 0; margin: 0; }
+  body.export [data-export-hide] { display: none !important; }
+  body.export .frame { border-radius: 0 !important; }
+</style>
+</head>
+
+<body class="bg-[#050609] text-white antialiased">
+
+<header data-export-hide class="mx-auto max-w-[1900px] px-8 pt-10 pb-2">
+  <h1 class="text-2xl font-bold tracking-tight">Resumax — App Store screenshots</h1>
+  <p class="mt-1.5 text-sm text-slate-400">
+    Each card is 430 &times; 932 CSS px. Capture at a device pixel ratio of 3 for
+    the required 1290 &times; 2796, or run
+    <code class="rounded bg-white/10 px-1.5 py-0.5 text-[13px] text-slate-300">export.js</code>.
+    Apple rejects any upload carrying an alpha channel &mdash; flatten to RGB.
+  </p>
+</header>
+
+<main class="mx-auto grid max-w-[1900px] grid-cols-1 gap-8 p-8 md:grid-cols-2 lg:grid-cols-4">
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       FRAME 1 — ATS Strength Hero
+       The lead frame, so it carries the single strongest proof in the app:
+       a numeric score. The emerald glow sits directly behind the badge to
+       pull the eye there first at thumbnail size.
+       ══════════════════════════════════════════════════════════════════ -->
+  <figure id="frame-1"
+          class="frame relative isolate mx-auto overflow-hidden rounded-[28px]
+                 bg-[linear-gradient(180deg,#0A0B0E_0%,#101520_52%,#0A0B0E_100%)]
+                 ring-1 ring-white/5">
+
+    <div class="pointer-events-none absolute left-1/2 top-[330px] -z-10 h-[560px] w-[560px]
+                -translate-x-1/2 rounded-full blur-[8px]
+                bg-[radial-gradient(circle,rgba(34,197,94,0.30)_0%,rgba(34,197,94,0.10)_38%,transparent_68%)]"></div>
+
+    <figcaption class="relative z-10 px-9 pt-[52px]">
+      <h2 class="text-[34px] font-extrabold leading-[1.08] tracking-[-0.02em]">
+        Instant ATS<br>Optimization
+      </h2>
+      <p class="mt-3.5 text-[15.5px] leading-[1.45] text-slate-400">
+        Get real-time AI scoring and actionable improvements.
+      </p>
+    </figcaption>
+
+    <!--
+      158% + 16px — a further slight bump from 150%, same bezel treatment as
+      Frame 2 (border-white/20 + the 0.8-opacity shadow) for a consistent
+      family look. f1_screen.jpg is top-anchored (see prep_assets.py) so real
+      content starts at source row 0; at this scale the spec table and the
+      94% strength badge land around 39%-44% of the frame — the visual centre
+      — while the full strength card fills to ~99% and the Download button
+      resolves just past the 932px bottom edge, bled off like Frame 2's nav.
+    -->
+    <div class="relative z-10 mt-[16px] flex origin-top justify-center scale-[1.58]">
+      <div class="w-[332px] rounded-[38px] border border-white/20 bg-[#111318] p-[9px]
+                  shadow-[0_20px_50px_rgba(0,0,0,0.8)]">
+        <div class="aspect-[1170/2426] overflow-hidden rounded-[30px] bg-[#0A0B0E]">
+          <img src="f1_screen.jpg" alt="Resume strength score and AI suggestions"
+               class="h-full w-full object-cover object-top">
+        </div>
+      </div>
+    </div>
+  </figure>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       FRAME 2 — Core Upload Flow
+       Deliberately the emptiest composition of the four: it is the "what do
+       I actually do" frame, and the bottom bleed keeps the eye on the
+       upload target rather than the chrome below it.
+       ══════════════════════════════════════════════════════════════════ -->
+  <figure id="frame-2"
+          class="frame relative isolate mx-auto overflow-hidden rounded-[28px]
+                 bg-[linear-gradient(180deg,#0A0B0E_0%,#0F1220_55%,#0A0B0E_100%)]
+                 ring-1 ring-white/5">
+
+    <!-- Blue/violet accent glow, centred behind the device. -->
+    <div class="pointer-events-none absolute left-1/2 top-[420px] -z-10 h-[640px] w-[640px]
+                -translate-x-1/2 rounded-full blur-[10px]
+                bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))]
+                from-blue-600/25 via-indigo-900/10 to-transparent"></div>
+
+    <figcaption class="relative z-10 px-9 pt-[52px]">
+      <h2 class="text-[34px] font-extrabold leading-[1.08] tracking-[-0.02em]">
+        Transform Your<br>Resume
+      </h2>
+      <p class="mt-3.5 text-[15.5px] leading-[1.45] text-slate-400">
+        Upload any PDF to rewrite and polish in seconds.
+      </p>
+    </figcaption>
+
+    <!--
+      Zoomed to 137% (a further ~16% over the previous 118% pass) and dropped
+      lower on the card, measured against the actual rendered geometry rather
+      than eyeballed: at this scale + a 16px gap under the subtitle, the
+      dropzone-to-list span (source rows ~578-1920 of the 2426px capture)
+      lands at roughly 43%-94% of the frame's height — the dominant, centred
+      content — while the bottom nav (source row ~2160+) resolves past the
+      932px frame bottom entirely, so it's gone rather than merely clipped.
+      figure keeps overflow-hidden and a fixed 932px height, so this costs
+      nothing extra and the outer canvas stays exactly 430x932 CSS
+      (1290x2796 at the 3x export scale) regardless of how the phone moves.
+    -->
+    <div class="relative z-10 mt-[16px] flex origin-top justify-center scale-[1.37]">
+      <div class="w-[332px] rounded-[38px] border border-white/20 bg-[#111318] p-[9px]
+                  shadow-[0_20px_50px_rgba(0,0,0,0.8)]">
+        <div class="aspect-[1170/2426] overflow-hidden rounded-[30px] bg-[#0A0B0E]">
+          <img src="home.jpg" alt="Upload a PDF resume"
+               class="h-full w-full object-cover object-top">
+        </div>
+      </div>
+    </div>
+  </figure>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       FRAME 3 — Professional Format Output
+       The only frame whose payload is a light document on a dark field, so
+       the glow here is neutral rather than coloured: any hue would tint the
+       page and undercut the "this is a real, clean CV" claim.
+       ══════════════════════════════════════════════════════════════════ -->
+  <figure id="frame-3"
+          class="frame relative isolate mx-auto overflow-hidden rounded-[28px]
+                 bg-[linear-gradient(180deg,#0A0B0E_0%,#12151C_54%,#0A0B0E_100%)]
+                 ring-1 ring-white/5">
+
+    <div class="pointer-events-none absolute left-1/2 top-[320px] -z-10 h-[580px] w-[580px]
+                -translate-x-1/2 rounded-full blur-[8px]
+                bg-[radial-gradient(circle,rgba(226,232,240,0.20)_0%,rgba(148,163,184,0.07)_40%,transparent_70%)]"></div>
+
+    <figcaption class="relative z-10 px-9 pt-[52px]">
+      <h2 class="text-[34px] font-extrabold leading-[1.08] tracking-[-0.02em]">
+        Proven Professional<br>Formats
+      </h2>
+      <p class="mt-3.5 text-[15.5px] leading-[1.45] text-slate-400">
+        Industry-standard layouts designed to pass HR filters.
+      </p>
+    </figcaption>
+
+    <!--
+      Zoomed further than Frame 2 (145% vs 137%) because this screenshot's
+      payload — the white document preview, source rows ~260-1560 of 2426 —
+      is a single large element rather than a list, so it tolerates more
+      scale before anything gets cut. At 145% + 16px it spans roughly
+      36%-88% of the frame, and the "Use this template" button (source row
+      ~1860+) resolves right at the 932px edge, bleeding off the same way the
+      other frames' trailing chrome does. Bezel matches the Frame 2 standard
+      (border-white/20 + the 0.8-opacity shadow) so the modal reads as sitting
+      in the same phone family, rather than the softer neutral-tinted shadow
+      it had before.
+    -->
+    <div class="relative z-10 mt-[16px] flex origin-top justify-center scale-[1.45]">
+      <div class="w-[332px] rounded-[38px] border border-white/20 bg-[#111318] p-[9px]
+                  shadow-[0_20px_50px_rgba(0,0,0,0.8)]">
+        <div class="aspect-[1170/2426] overflow-hidden rounded-[30px] bg-[#0A0B0E]">
+          <img src="f3_screen.jpg" alt="Harvard CV format preview"
+               class="h-full w-full object-cover object-top">
+        </div>
+      </div>
+    </div>
+  </figure>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       FRAME 4 — Visual Templates (redesigned)
+       cv_template_zoomed.jpg — the raw 1099x547 template-carousel strip —
+       is now the device's on-screen content directly, object-cover'd and
+       zoomed 125% so it reads as one template card filling the screen,
+       rather than composited underneath a chip list. Two more crops of that
+       same strip (f4_float_card1/2.jpg — the Harvard and Chronological
+       cards) are layered as small tilted cards spilling past the bezel's
+       left and right edges for a 3D, stacked-cards effect. The bezel is
+       kept at its base 332px width — unlike Frames 1-3 it is NOT run
+       through a wrapper-level scale transform, because that would make the
+       bezel wider than the 430px frame (as it did before) and leave no
+       margin for the floating cards to spill into without being clipped by
+       the frame's own overflow-hidden edge. The pills and floating cards
+       are figure-level siblings of the device, not its children, for the
+       same reason: their size and position must stay independent of
+       whatever the device inside is doing.
+       ══════════════════════════════════════════════════════════════════ -->
+  <figure id="frame-4"
+          class="frame relative isolate mx-auto overflow-hidden rounded-[28px]
+                 bg-[linear-gradient(180deg,#0A0B0E_0%,#0E1424_56%,#0A0B0E_100%)]
+                 ring-1 ring-white/5">
+
+    <div class="pointer-events-none absolute left-1/2 top-[340px] -z-10 h-[600px] w-[600px]
+                -translate-x-1/2 rounded-full blur-[8px]
+                bg-[radial-gradient(circle,rgba(56,130,246,0.30)_0%,rgba(99,102,241,0.12)_40%,transparent_70%)]"></div>
+
+    <figcaption class="relative z-10 px-9 pt-[52px]">
+      <h2 class="text-[34px] font-extrabold leading-[1.08] tracking-[-0.02em]">
+        Global Resume<br>Formats
+      </h2>
+      <p class="mt-3.5 text-[15.5px] leading-[1.45] text-slate-400">
+        Export in Harvard, Europass, or ATS-optimized layouts with one tap.
+      </p>
+    </figcaption>
+
+    <!-- Pills, angled and set over the top corners of the bezel (bezel spans
+         roughly x:49-381 of the 430px frame; top edge sits at ~200px). -->
+    <div class="pointer-events-none absolute left-[20px] top-[186px] z-30 rotate-[-7deg]
+                rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-xs
+                font-medium text-white backdrop-blur-md shadow-[0_8px_24px_-8px_rgba(0,0,0,0.8)]">
+      Europass (EU)
+    </div>
+    <div class="pointer-events-none absolute right-[20px] top-[228px] z-30 rotate-[5deg]
+                rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-xs
+                font-medium text-white backdrop-blur-md shadow-[0_8px_24px_-8px_rgba(0,0,0,0.8)]">
+      US / Canada Resume
+    </div>
+
+    <!-- Floating template cards, spilling past the bezel's side edges. Cropped
+         from the same source strip as the on-screen image, so they read as
+         "more cards like this one" rather than unrelated decoration. -->
+    <div class="absolute left-[2px] top-[560px] z-20 w-[104px] overflow-hidden rounded-xl
+                border border-white/10 rotate-[-11deg] shadow-[0_20px_40px_-8px_rgba(0,0,0,0.75)]">
+      <img src="f4_float_card1.jpg" alt="Harvard CV template" class="block w-full">
+    </div>
+    <div class="absolute right-[2px] top-[760px] z-20 w-[104px] overflow-hidden rounded-xl
+                border border-white/10 rotate-[9deg] shadow-[0_20px_40px_-8px_rgba(0,0,0,0.75)]">
+      <img src="f4_float_card2.jpg" alt="Chronological CV template" class="block w-full">
+    </div>
+
+    <!-- Device stays at its base 332px width (no wrapper scale) so the
+         floating cards above have somewhere to spill into. -->
+    <div class="relative z-10 mt-[16px] flex justify-center">
+      <div class="relative w-[332px] rounded-[38px] border border-white/20 bg-[#111318] p-[9px]
+                  shadow-[0_20px_50px_rgba(0,0,0,0.8)]">
+        <div class="relative aspect-[1170/2426] overflow-hidden rounded-[30px] bg-[#0A0B0E]">
+          <img src="f4_main_screen.jpg" alt="Template gallery, zoomed"
+               class="h-full w-full origin-center scale-[1.1] object-cover object-center">
+        </div>
+      </div>
+    </div>
+  </figure>
+
+</main>
+
+<footer data-export-hide class="mx-auto max-w-[1900px] px-8 pb-14 text-sm text-slate-500">
+  Screenshots must reflect actual in-app use (App Review guideline 2.3.3). Every
+  pixel inside the device frames is a real capture; only the captions, glows and
+  pills are added.
+</footer>
+
+</body>
+</html>

@@ -16,7 +16,7 @@
 
 import React, { useEffect, useRef } from "react";
 import { Animated, View } from "react-native";
-import Svg, { Path } from "react-native-svg";
+import Svg, { G, Path } from "react-native-svg";
 import { useTheme } from "@/hooks/useTheme";
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
@@ -78,16 +78,22 @@ function getArrowShaftPath(): string {
   return `M ${x1} ${y1} L ${tipX} ${tipY}`;
 }
 
-function getArrowHeadPath(): string {
+function headBarbPoints(): [[number, number], [number, number]] {
   const { tipX, tipY, ux, uy } = arrowGeometry();
-  const barbs: string[] = [];
+  const barbs: [number, number][] = [];
   for (const sign of [1.0, -1.0]) {
     const a = ((HEAD_ANGLE * Math.PI) / 180) * sign;
     const rx = -ux * Math.cos(a) + uy * Math.sin(a);
     const ry = -ux * Math.sin(a) - uy * Math.cos(a);
-    barbs.push(`${tipX + rx * HEAD_LEN} ${tipY + ry * HEAD_LEN}`);
+    barbs.push([tipX + rx * HEAD_LEN, tipY + ry * HEAD_LEN]);
   }
-  return `M ${barbs[0]} L ${tipX} ${tipY} L ${barbs[1]}`;
+  return barbs as [[number, number], [number, number]];
+}
+
+function getArrowHeadPath(): string {
+  const { tipX, tipY } = arrowGeometry();
+  const [b1, b2] = headBarbPoints();
+  return `M ${b1[0]} ${b1[1]} L ${tipX} ${tipY} L ${b2[0]} ${b2[1]}`;
 }
 
 const M_PATH = getMPath();
@@ -98,6 +104,54 @@ const HEAD_PATH = getArrowHeadPath();
 // dasharray longer than the real path still hides it fully at full offset
 // and reveals it fully at zero offset, which is all "draw" needs.
 const DASH_LENGTH = 220;
+
+/**
+ * Bounding box of the drawn artwork, including the stroke's half-width —
+ * mirrors assets/brand/mark.py's _bbox() exactly. Round caps/joins mean every
+ * stroked vertex extends STROKE/2 in all directions, so padding by that is
+ * exact rather than approximate.
+ *
+ * Without this, the raw geometry (drawn straight into a 0..100 viewBox) gets
+ * clipped: the arrowhead's tip lands at y ≈ -21 and its barb at y ≈ -26,
+ * both above the viewBox's top edge, so the top of the mark — the arrow
+ * itself — was silently cut off on every render.
+ */
+function computeBBox() {
+  const half = STROKE / 2;
+  const pts: [number, number][] = [
+    [LEFT, BOTTOM],
+    [LEFT + (MID - LEFT) * LEAN, TOP],
+    [MID, VALLEY],
+    [RIGHT - (RIGHT - MID) * LEAN, TOP],
+    [RIGHT, BOTTOM],
+  ];
+  const { x1: sx, y1: sy, tipX, tipY } = arrowGeometry();
+  pts.push([sx, sy], [tipX, tipY], ...headBarbPoints());
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [x, y] of pts) {
+    minX = Math.min(minX, x - half);
+    maxX = Math.max(maxX, x + half);
+    minY = Math.min(minY, y - half);
+    maxY = Math.max(maxY, y + half);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+// Scale + translate that centres the artwork in the VIEW x VIEW square with
+// a small margin — mirrors mark.py's _fit_transform(). Applied as a <G>
+// transform on every variant below, instead of relying on the raw viewBox.
+const FIT_MARGIN_FRAC = 0.06;
+const BBOX = computeBBox();
+const BBOX_W = BBOX.maxX - BBOX.minX;
+const BBOX_H = BBOX.maxY - BBOX.minY;
+const FIT_SCALE = (VIEW * (1 - FIT_MARGIN_FRAC * 2)) / Math.max(BBOX_W, BBOX_H);
+const FIT_TX = (VIEW - BBOX_W * FIT_SCALE) / 2 - BBOX.minX * FIT_SCALE;
+const FIT_TY = (VIEW - BBOX_H * FIT_SCALE) / 2 - BBOX.minY * FIT_SCALE;
+const FIT_TRANSFORM = `translate(${FIT_TX} ${FIT_TY}) scale(${FIT_SCALE})`;
 
 export function AnimatedLogo({
   variant = "draw",
@@ -134,9 +188,11 @@ function StaticLogo({ size, color }: { size: number; color: string }) {
   };
   return (
     <Svg width={size} height={size} viewBox={`0 0 ${VIEW} ${VIEW}`}>
-      <Path d={M_PATH} {...common} />
-      <Path d={SHAFT_PATH} {...common} />
-      <Path d={HEAD_PATH} {...common} />
+      <G transform={FIT_TRANSFORM}>
+        <Path d={M_PATH} {...common} />
+        <Path d={SHAFT_PATH} {...common} />
+        <Path d={HEAD_PATH} {...common} />
+      </G>
     </Svg>
   );
 }
@@ -185,9 +241,11 @@ function DrawingAnimation({
   return (
     <View style={{ width: size, height: size }}>
       <Svg width={size} height={size} viewBox={`0 0 ${VIEW} ${VIEW}`}>
-        <AnimatedPath d={M_PATH} {...common} strokeDashoffset={dashOffset} />
-        <AnimatedPath d={SHAFT_PATH} {...common} strokeDashoffset={dashOffset} />
-        <AnimatedPath d={HEAD_PATH} {...common} strokeDashoffset={dashOffset} />
+        <G transform={FIT_TRANSFORM}>
+          <AnimatedPath d={M_PATH} {...common} strokeDashoffset={dashOffset} />
+          <AnimatedPath d={SHAFT_PATH} {...common} strokeDashoffset={dashOffset} />
+          <AnimatedPath d={HEAD_PATH} {...common} strokeDashoffset={dashOffset} />
+        </G>
       </Svg>
     </View>
   );
@@ -344,16 +402,18 @@ function ArrowPulseAnimation({
   return (
     <View style={{ width: size, height: size }}>
       <Svg width={size} height={size} viewBox={`0 0 ${VIEW} ${VIEW}`}>
-        <Path
-          d={M_PATH}
-          fill="none"
-          stroke={color}
-          strokeWidth={STROKE}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <AnimatedPath d={SHAFT_PATH} {...arrowCommon} />
-        <AnimatedPath d={HEAD_PATH} {...arrowCommon} />
+        <G transform={FIT_TRANSFORM}>
+          <Path
+            d={M_PATH}
+            fill="none"
+            stroke={color}
+            strokeWidth={STROKE}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <AnimatedPath d={SHAFT_PATH} {...arrowCommon} />
+          <AnimatedPath d={HEAD_PATH} {...arrowCommon} />
+        </G>
       </Svg>
     </View>
   );

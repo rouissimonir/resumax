@@ -33,6 +33,20 @@
         "EXPO_PUBLIC_RC_IOS": "$EXPO_PUBLIC_RC_IOS",
         "EXPO_PUBLIC_RC_ANDROID": "$EXPO_PUBLIC_RC_ANDROID"
       }
+    },
+    "preview-device": {
+      "ios": {
+        "simulator": false
+      },
+      "android": {
+        "buildType": "apk"
+      },
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://resumee-nhrs.onrender.com",
+        "EXPO_PUBLIC_RC_IOS": "$EXPO_PUBLIC_RC_IOS",
+        "EXPO_PUBLIC_RC_ANDROID": "$EXPO_PUBLIC_RC_ANDROID"
+      }
     }
   },
   "submit": {

@@ -27,6 +27,14 @@ export type Resume = {
   templateId: string;
   /** Whether a headshot is stored server-side for this job. */
   hasPhoto?: boolean;
+  /**
+   * True once this specific resume has been legitimately downloaded — either
+   * spending the account's one free download on it, or while Pro. Lets a
+   * re-download (e.g. from History, after Pro lapses) skip the paywall gate
+   * for a file that was already paid for, without granting a second free
+   * download on a DIFFERENT resume.
+   */
+  paidFor?: boolean;
 };
 
 /**

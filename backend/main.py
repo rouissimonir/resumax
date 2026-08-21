@@ -1,6 +1,9 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import os
 import tempfile
 from datetime import datetime
@@ -52,10 +55,21 @@ logger.info("=" * 80)
 
 app = FastAPI(title="Resumax API")
 
+# Per-IP request throttling. The heavy endpoints below run OCR/PDF generation
+# and call out to Groq/Gemini, so an unthrottled client could both run up API
+# cost and starve the (4-worker) thread pool for every other user.
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    # allow_credentials=True is invalid together with allow_origins=["*"]
+    # (browsers reject that combination outright) and unnecessary here: the
+    # app is a native Expo client that authenticates via request params, not
+    # cookies, so no request ever needs credentials to cross an origin.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -115,6 +129,50 @@ def cleanup_after_request(file_id: str):
                 os.remove(path)
         except Exception as e:
             logger.warning(f"Could not delete temp file {path}: {e}")
+
+
+# ── Upload guards ────────────────────────────────────────────────────────
+# Both endpoints below used `await file.read()` with no limit at all: the
+# whole body landed in memory as one bytes object regardless of size, so one
+# large enough POST could OOM the instance before any validation ran. This
+# reads in bounded chunks and aborts the moment the cap is crossed, instead
+# of buffering an oversized upload just to reject it afterwards.
+MAX_RESUME_BYTES = 10 * 1024 * 1024
+PDF_MAGIC = b"%PDF-"
+
+
+async def read_upload_capped(
+    file: UploadFile, max_bytes: int, magic: Optional[bytes] = None
+) -> bytes:
+    """Read an UploadFile in chunks, enforcing max_bytes as it goes.
+
+    magic, if given, must match the start of the content — checked as soon as
+    the first chunk arrives, so a renamed non-PDF (or any other content-type
+    mismatch) is rejected before the rest of the body is even read.
+    """
+    chunk_size = 1024 * 1024
+    total = 0
+    chunks = []
+    first = True
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        if first:
+            if magic and not chunk.startswith(magic):
+                raise HTTPException(
+                    status_code=400,
+                    detail="File content doesn't match its extension.",
+                )
+            first = False
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large (max {max_bytes // (1024 * 1024)} MB)",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 # ── Photo handling ────────────────────────────────────────────────────────
@@ -220,7 +278,9 @@ async def get_progress(file_id: str):
     return progress
 
 @app.post("/api/upload-resume")
+@limiter.limit("10/minute")
 async def upload_resume(
+    request: Request,
     file: UploadFile = File(...),
     template_id: str = Form(default="professional"),
     # Saved user preferences, sent by the client on every upload. All optional:
@@ -259,7 +319,7 @@ async def upload_resume(
     logger.info(f"Processing file {file_id}. Saving to {original_path}")
     
     try:
-        contents = await file.read()
+        contents = await read_upload_capped(file, MAX_RESUME_BYTES, magic=PDF_MAGIC)
         with open(original_path, "wb") as f:
             f.write(contents)
         logger.info(f"File saved successfully. Size: {len(contents)} bytes")
@@ -267,7 +327,7 @@ async def upload_resume(
         # A bad photo must never sink an otherwise good resume upload.
         if photo is not None and photo.filename:
             try:
-                save_photo(file_id, await photo.read())
+                save_photo(file_id, await read_upload_capped(photo, MAX_PHOTO_BYTES))
             except HTTPException as e:
                 logger.warning(f"Photo rejected for {file_id}: {e.detail}")
             except Exception as e:
@@ -383,6 +443,10 @@ async def upload_resume(
             "language": improved_data.get("language"),
         }
     
+    except HTTPException:
+        # Let cap/format rejections (413/400) reach the client as-is instead of
+        # being flattened into a generic 500 by the except below.
+        raise
     except Exception as e:
         logger.error(f"Error processing resume: {str(e)}", exc_info=True)
         progress_store[file_id] = {
@@ -438,19 +502,20 @@ async def health_check():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 @app.post("/api/generate-pdf")
-async def generate_pdf(request: GeneratePDFRequest):
+@limiter.limit("20/minute")
+async def generate_pdf(request: Request, body: GeneratePDFRequest):
     """
     Generate PDF for a file. Requires Pro Access verification.
     """
-    logger.info(f"Generate PDF request for file: {request.file_id}, User: {request.user_id}")
+    logger.info(f"Generate PDF request for file: {body.file_id}, User: {body.user_id}")
     
     # 1. Verify Entitlement
-    if not revenue_cat_service.verify_pro_access(request.user_id):
-        logger.warning(f"Access denied for user {request.user_id}")
+    if not revenue_cat_service.verify_pro_access(body.user_id):
+        logger.warning(f"Access denied for user {body.user_id}")
         raise HTTPException(status_code=403, detail="Pro access required to generate PDF")
         
     # 2. Load Data
-    debug_path = os.path.join(OUTPUT_DIR, f"{request.file_id}_debug.json")
+    debug_path = os.path.join(OUTPUT_DIR, f"{body.file_id}_debug.json")
     if not os.path.exists(debug_path):
         raise HTTPException(status_code=404, detail="Resume data not found. Please upload again.")
         
@@ -461,25 +526,26 @@ async def generate_pdf(request: GeneratePDFRequest):
     # 3. Generate PDF. The photo is stored per file_id, independent of format —
     #    the renderer decides whether to use it, so switching Europass -> US ->
     #    Europass simply hides and re-shows it with no state to manage.
-    improved_path = os.path.join(OUTPUT_DIR, f"{request.file_id}_improved.pdf")
+    improved_path = os.path.join(OUTPUT_DIR, f"{body.file_id}_improved.pdf")
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         executor, generate_improved_pdf, improved_data, improved_path,
-        request.template_id, photo_path_for(request.file_id),
+        body.template_id, photo_path_for(body.file_id),
     )
 
     return {
         "status": "success",
-        "download_url": f"/api/download/{request.file_id}"
+        "download_url": f"/api/download/{body.file_id}"
     }
 
 
 @app.post("/api/upload-photo")
-async def upload_photo(file_id: str = Form(...), photo: UploadFile = File(...)):
+@limiter.limit("20/minute")
+async def upload_photo(request: Request, file_id: str = Form(...), photo: UploadFile = File(...)):
     """Attach or replace the headshot for an existing job."""
     if not os.path.exists(os.path.join(OUTPUT_DIR, f"{file_id}_debug.json")):
         raise HTTPException(status_code=404, detail="Resume data not found. Please upload again.")
-    save_photo(file_id, await photo.read())
+    save_photo(file_id, await read_upload_capped(photo, MAX_PHOTO_BYTES))
     return {"status": "success", "has_photo": True}
 
 

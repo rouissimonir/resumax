@@ -13,3 +13,4 @@ pytesseract
 PyPDF2
 json_repair
 dotenv
+slowapi

@@ -42,7 +42,7 @@ export default function PreviewScreen() {
   const { theme } = useTheme();
   const route = useRoute<PreviewRouteProp>();
   const navigation = useNavigation<NavigationProp>();
-  const { getResumeById } = useResumes();
+  const { getResumeById, updateResume } = useResumes();
   const {
     isPro,
     userId,
@@ -134,12 +134,14 @@ export default function PreviewScreen() {
         <Pressable
           onPress={handleShare}
           hitSlop={10}
+          accessibilityLabel="Share resume"
           style={({ pressed }) => [
             styles.headerButton,
             pressed && { opacity: PressedOpacity },
           ]}
         >
-          <Feather name="share" size={20} color={theme.text} />
+          <Feather name="share" size={19} color={theme.text} />
+          <ThemedText style={styles.headerButtonLabel}>Share</ThemedText>
         </Pressable>
       ),
     });
@@ -170,6 +172,10 @@ export default function PreviewScreen() {
     if (!isPro && !freeDownloadUsed) {
       await consumeFreeDownload();
     }
+    // Marks THIS resume as covered, so ResumeDetailScreen can let a later
+    // re-download through without re-charging the free credit or blocking a
+    // lapsed-Pro user from a file they already paid for.
+    updateResume(resume.id, { paidFor: true });
   };
 
   const handleDownload = async () => {
@@ -203,10 +209,20 @@ export default function PreviewScreen() {
         return;
       }
 
-      // Pass the template the user actually chose. Omitting it made the server
-      // fall back to "professional", so any other choice was silently discarded
-      // at download time.
-      await resumeApi.generatePdf(resume.id, userId, resume.templateId);
+      // /api/generate-pdf is Pro-gated server-side — regenerating with a
+      // chosen template is the paid "every CV format" feature (see
+      // PricingScreen). A free user's one download is of the file
+      // /api/upload-resume already rendered with their original template
+      // choice, so calling generate-pdf unconditionally here made every free
+      // download 403 with "Pro access required to generate PDF" before it
+      // ever reached the paywall gate above. Only Pro users need — or are
+      // allowed — to trigger a regenerate.
+      if (isPro) {
+        // Pass the template the user actually chose. Omitting it made the
+        // server fall back to "professional", so any other choice was
+        // silently discarded at download time.
+        await resumeApi.generatePdf(resume.id, userId, resume.templateId);
+      }
       const downloadUrl = resumeApi.getDownloadUrl(resume.id);
 
       if (Platform.OS === "web") {
@@ -678,7 +694,15 @@ const styles = StyleSheet.create({
     paddingBottom: 150,
   },
   headerButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     paddingHorizontal: Spacing.xs,
+    paddingVertical: 4,
+  },
+  headerButtonLabel: {
+    fontSize: 15,
+    fontWeight: "600",
   },
   emptyState: {
     padding: Spacing.xl,

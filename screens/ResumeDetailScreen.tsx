@@ -20,8 +20,9 @@ import { ScreenScrollView } from "@/components/ScreenScrollView";
 import { ThemedText } from "@/components/ThemedText";
 import { Card } from "@/components/Card";
 import { useTheme } from "@/hooks/useTheme";
-import { Spacing, BorderRadius, Typography, Shadows } from "@/constants/theme";
+import { Spacing, BorderRadius, Typography, Shadows, Hairline } from "@/constants/theme";
 import { useResumes } from "@/contexts/ResumeContext";
+import { useRevenueCat } from "@/contexts/RevenueCatContext";
 import { HistoryStackParamList } from "@/navigation/HistoryStackNavigator";
 import { resumeApi } from "@/services/resumeApi";
 import { RatingModal } from "@/components/RatingModal";
@@ -36,7 +37,9 @@ export default function ResumeDetailScreen() {
   const { theme } = useTheme();
   const route = useRoute<ResumeDetailRouteProp>();
   const navigation = useNavigation<NavigationProp>();
-  const { getResumeById } = useResumes();
+  const { getResumeById, updateResume } = useResumes();
+  const { isPro, freeDownloadUsed, canDownload, consumeFreeDownload } =
+    useRevenueCat();
   const insets = useSafeAreaInsets();
 
   const [isDownloading, setIsDownloading] = useState(false);
@@ -55,13 +58,50 @@ export default function ResumeDetailScreen() {
     );
   }
 
+  /**
+   * Marks this resume as covered (so a later re-download here or in
+   * PreviewScreen never re-charges it) and, only if that's what actually
+   * paid for it, spends the account's one-time free credit. Pro downloads
+   * don't touch the credit at all.
+   */
+  const settleDownload = async () => {
+    if (!isPro && !freeDownloadUsed) {
+      await consumeFreeDownload();
+    }
+    updateResume(resume.id, { paidFor: true });
+  };
+
   const handleDownload = async () => {
+    // This screen used to hit /api/download/{id} with no gate at all. Since
+    // /api/upload-resume already renders a PDF on the first pass, that made
+    // PreviewScreen's canDownload check the ONLY thing standing between a
+    // free user and unlimited downloads — skip it here, open History, and
+    // every resume downloads free forever. A resume already paid for (its
+    // own free credit already spent on it, or downloaded while Pro) is
+    // exempt, so this doesn't charge twice for the same file.
+    if (!resume.paidFor && !canDownload) {
+      Alert.alert(
+        "You've used your free CV",
+        "Tailoring your CV to each job is what actually moves the needle — " +
+          "unlock unlimited downloads to keep going.",
+        [
+          { text: "Not now", style: "cancel" },
+          {
+            text: "See plans",
+            onPress: () => navigation.navigate("Pricing" as any),
+          },
+        ],
+      );
+      return;
+    }
+
     try {
       setIsDownloading(true);
       const downloadUrl = resumeApi.getDownloadUrl(resume.id);
 
       if (Platform.OS === "web") {
         window.open(downloadUrl, "_blank");
+        await settleDownload();
         return;
       }
 
@@ -73,6 +113,8 @@ export default function ResumeDetailScreen() {
       const result = await downloadResumable.downloadAsync();
 
       if (!result || result.status !== 200) throw new Error("Download failed");
+
+      await settleDownload();
 
       // Prompt for rating after success
       setTimeout(() => setShowRatingPrompt(true), 2000);
@@ -161,8 +203,21 @@ export default function ResumeDetailScreen() {
   React.useLayoutEffect(() => {
     navigation.setOptions({
       headerRight: () => (
-        <Pressable onPress={handleShare} style={styles.headerButton}>
-          <Feather name="share-2" size={24} color={theme.primary} />
+        <Pressable
+          onPress={handleShare}
+          style={({ pressed }) => [
+            styles.headerButton,
+            pressed && { opacity: 0.6 },
+          ]}
+          accessibilityLabel="Share resume"
+          hitSlop={10}
+        >
+          <Feather name="share-2" size={19} color={theme.primary} />
+          <ThemedText
+            style={[Typography.bodySmall, { color: theme.primary, fontWeight: "600" }]}
+          >
+            Share
+          </ThemedText>
         </Pressable>
       ),
     });
@@ -179,11 +234,20 @@ export default function ResumeDetailScreen() {
               >
                 Filename
               </ThemedText>
-              <ThemedText style={Typography.body}>
+              <ThemedText
+                style={[Typography.body, styles.infoValue]}
+                numberOfLines={1}
+                ellipsizeMode="middle"
+              >
                 {resume.originalFilename}
               </ThemedText>
             </View>
-            <View style={styles.infoRow}>
+            <View
+              style={[
+                styles.infoRow,
+                { borderTopWidth: Hairline, borderTopColor: theme.border },
+              ]}
+            >
               <ThemedText
                 style={[Typography.bodySmall, { color: theme.textSecondary }]}
               >
@@ -438,17 +502,28 @@ export default function ResumeDetailScreen() {
 // ─── Screen styles ────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: { paddingHorizontal: Spacing.lg },
-  headerButton: { padding: Spacing.sm },
-
-  infoCard: {
+  headerButton: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 6,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 6,
+  },
+
+  infoCard: {
     padding: Spacing.lg,
     borderRadius: BorderRadius.lg,
     borderWidth: 1,
     marginBottom: Spacing.lg,
   },
-  infoRow: { flexDirection: "row", alignItems: "center", flex: 1, gap: Spacing.md },
+  infoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: Spacing.sm,
+    gap: Spacing.md,
+  },
+  infoValue: { flexShrink: 1, textAlign: "right" },
   infoIcon: { width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
   statusPill: { flexDirection: "row", alignItems: "center", paddingHorizontal: Spacing.sm, paddingVertical: 4, borderRadius: BorderRadius.full },
 
