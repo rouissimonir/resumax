@@ -69,6 +69,10 @@ interface RevenueCatContextType {
   purchasePackage: (pack: PurchasesPackage) => Promise<void>;
   restorePurchases: () => Promise<void>;
   isLoading: boolean;
+  /** Why the packages list is empty, when it is. Shown on the paywall. */
+  offeringsError: string | null;
+  /** Re-fetch offerings, e.g. from a "Try again" button. */
+  refreshOfferings: () => Promise<void>;
   userId: string | null;
   /** True once the install has spent its single free PDF download. */
   freeDownloadUsed: boolean;
@@ -138,6 +142,7 @@ export function RevenueCatProvider({
   const [passExpiresAt, setPassExpiresAt] = useState<Date | null>(null);
   const [packages, setPackages] = useState<PurchasesPackage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [offeringsError, setOfferingsError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [freeDownloadUsed, setFreeDownloadUsed] = useState(false);
 
@@ -182,6 +187,54 @@ export function RevenueCatProvider({
     setIsPro(lifetime || passActive || devPurchasedRef.current);
   }, []);
 
+  const loadOfferings = useCallback(async () => {
+    try {
+      const offerings = await Purchases.getOfferings();
+      // Fall back to any offering with packages so a missing "Current" flag
+      // in the dashboard doesn't leave the paywall empty.
+      const offering =
+        offerings.current && offerings.current.availablePackages.length > 0
+          ? offerings.current
+          : Object.values(offerings.all).find(
+              (o) => o.availablePackages.length > 0,
+            );
+
+      if (offering) {
+        console.log(
+          "[RevenueCat] Offerings found:",
+          offering.identifier,
+          offering.availablePackages.length,
+        );
+        setPackages(sortByPrice(offering.availablePackages));
+        setOfferingsError(null);
+        return;
+      }
+
+      const ids = Object.keys(offerings.all).join(", ") || "none";
+      console.warn(
+        "[RevenueCat] No offerings found. Check your RevenueCat dashboard configuration or if you are in Expo Go.",
+      );
+      setOfferingsError(
+        `No packages returned (current: ${offerings.current?.identifier ?? "none"}, offerings: ${ids}). Products may not be resolving from the App Store.`,
+      );
+      if (__DEV__) {
+        console.log("[RevenueCat] Development mode: Providing mock offering.");
+        setUserId((prev) => prev ?? DEV_USER_ID);
+        setPackages(MOCK_PACKAGES);
+      }
+    } catch (e: any) {
+      console.error("[RevenueCat] Offerings error:", e);
+      setOfferingsError(e?.message ?? String(e));
+      if (__DEV__) setPackages(MOCK_PACKAGES);
+    }
+  }, []);
+
+  const refreshOfferings = useCallback(async () => {
+    setIsLoading(true);
+    await loadOfferings();
+    setIsLoading(false);
+  }, [loadOfferings]);
+
   const initRevenueCat = async () => {
     try {
       console.log(`[RevenueCat] Initializing for ${Platform.OS}...`);
@@ -192,31 +245,22 @@ export function RevenueCatProvider({
         Purchases.configure({ apiKey: API_KEYS.google });
       }
 
-      const customerInfo = await Purchases.getCustomerInfo();
-      applyCustomerInfo(customerInfo);
+      // Offerings are fetched independently so a customer-info failure can't
+      // stop the paywall from loading its plans.
+      try {
+        const customerInfo = await Purchases.getCustomerInfo();
+        applyCustomerInfo(customerInfo);
 
-      const id = await Purchases.getAppUserID();
-      setUserId(id);
-
-      const offerings = await Purchases.getOfferings();
-      if (offerings.current && offerings.current.availablePackages.length > 0) {
-        console.log(
-          "[RevenueCat] Offerings found:",
-          offerings.current.availablePackages.length,
-        );
-        setPackages(sortByPrice(offerings.current.availablePackages));
-      } else {
-        console.warn(
-          "[RevenueCat] No offerings found. Check your RevenueCat dashboard configuration or if you are in Expo Go.",
-        );
-        if (__DEV__) {
-          console.log("[RevenueCat] Development mode: Providing mock offering.");
-          if (!userId) setUserId(DEV_USER_ID);
-          setPackages(MOCK_PACKAGES);
-        }
+        const id = await Purchases.getAppUserID();
+        setUserId(id);
+      } catch (e) {
+        console.error("[RevenueCat] Customer info error:", e);
       }
+
+      await loadOfferings();
     } catch (e: any) {
       console.error("[RevenueCat] Init error:", e);
+      setOfferingsError(e?.message ?? String(e));
 
       // In Expo Go this is expected — the native module isn't present.
       if (__DEV__) {
@@ -331,6 +375,8 @@ export function RevenueCatProvider({
         purchasePackage,
         restorePurchases,
         isLoading,
+        offeringsError,
+        refreshOfferings,
         userId,
         freeDownloadUsed,
         canDownload,

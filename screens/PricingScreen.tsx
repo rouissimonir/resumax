@@ -46,6 +46,8 @@ export default function PricingScreen() {
     restorePurchases,
     ownsLifetime,
     passExpiresAt,
+    offeringsError,
+    refreshOfferings,
   } = useRevenueCat();
   const insets = useSafeAreaInsets();
   const [isPurchasing, setIsPurchasing] = useState(false);
@@ -256,6 +258,26 @@ export default function PricingScreen() {
               <ThemedText style={{ color: theme.textSecondary }}>
                 No plans available right now. Please try again later.
               </ThemedText>
+              {offeringsError && (
+                <ThemedText
+                  type="caption"
+                  style={{
+                    color: theme.textSecondary,
+                    textAlign: "center",
+                    marginTop: Spacing.sm,
+                  }}
+                >
+                  {offeringsError}
+                </ThemedText>
+              )}
+              <Pressable
+                onPress={refreshOfferings}
+                style={{ marginTop: Spacing.md, padding: Spacing.sm }}
+              >
+                <ThemedText style={{ color: theme.primary }}>
+                  Try again
+                </ThemedText>
+              </Pressable>
             </View>
           )}
         </View>

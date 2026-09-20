@@ -25,8 +25,14 @@ const isLifetime = isLifetimePackage;
 
 export function PaywallModal({ visible, onClose }: PaywallModalProps) {
   const { theme } = useTheme();
-  const { packages, purchasePackage, isLoading, restorePurchases } =
-    useRevenueCat();
+  const {
+    packages,
+    purchasePackage,
+    isLoading,
+    restorePurchases,
+    offeringsError,
+    refreshOfferings,
+  } = useRevenueCat();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isPurchasing, setIsPurchasing] = useState(false);
 
@@ -118,6 +124,32 @@ export function PaywallModal({ visible, onClose }: PaywallModalProps) {
               color={theme.primary}
               style={{ marginTop: Spacing.xl }}
             />
+          ) : packages.length === 0 ? (
+            <View style={{ alignItems: "center", padding: Spacing.xl }}>
+              <ThemedText style={{ color: theme.textSecondary }}>
+                No plans available right now. Please try again later.
+              </ThemedText>
+              {offeringsError && (
+                <ThemedText
+                  type="caption"
+                  style={{
+                    color: theme.textSecondary,
+                    textAlign: "center",
+                    marginTop: Spacing.sm,
+                  }}
+                >
+                  {offeringsError}
+                </ThemedText>
+              )}
+              <Pressable
+                onPress={refreshOfferings}
+                style={{ marginTop: Spacing.md, padding: Spacing.sm }}
+              >
+                <ThemedText style={{ color: theme.primary }}>
+                  Try again
+                </ThemedText>
+              </Pressable>
+            </View>
           ) : (
             <View style={styles.tiers}>
               {packages.map((pack) => {
