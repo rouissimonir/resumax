@@ -79,39 +79,72 @@ export interface TemplatesResponse {
   templates: CVTemplate[];
 }
 
+/**
+ * Render's free tier spins the backend down after inactivity, so the first
+ * request after a while can take 30s+ to answer (the "cold start"). Templates
+ * are the first thing almost every screen needs, so we kick this fetch off
+ * once at module load — as soon as the JS bundle evaluates, well before any
+ * screen mounts and asks for it — and every caller shares that one in-flight
+ * request instead of triggering (and waiting on) their own.
+ */
+let templatesRequest: Promise<TemplatesResponse> | null = null;
+
+async function fetchTemplates(): Promise<TemplatesResponse> {
+  console.log(
+    "📡 Fetching templates from:",
+    `${API_BASE_URL}/api/templates`,
+  );
+  const response = await fetch(`${API_BASE_URL}/api/templates`);
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch templates: ${response.status} ${response.statusText}`,
+    );
+  }
+
+  const data = await response.json();
+
+  // Prepend base URL to preview images if they are relative paths
+  if (data.templates) {
+    data.templates = data.templates.map((t: any) => ({
+      ...t,
+      preview_image: t.preview_image.startsWith("/")
+        ? `${API_BASE_URL}${t.preview_image}`
+        : t.preview_image,
+    }));
+  }
+
+  console.log("✅ Templates loaded:", data);
+  return data;
+}
+
 export const resumeApi = {
+  /**
+   * Fetches the template list, reusing an in-flight/succeeded request (see
+   * `prefetchTemplates` below) so screens don't each pay for their own
+   * roundtrip. A failed request is not cached — the next call (e.g. an
+   * automatic retry) starts a fresh one.
+   */
   async getTemplates(): Promise<TemplatesResponse> {
-    try {
-      console.log(
-        "📡 Fetching templates from:",
-        `${API_BASE_URL}/api/templates`,
-      );
-      const response = await fetch(`${API_BASE_URL}/api/templates`);
-
-      if (!response.ok) {
-        throw new Error(
-          `Failed to fetch templates: ${response.status} ${response.statusText}`,
-        );
-      }
-
-      const data = await response.json();
-
-      // Prepend base URL to preview images if they are relative paths
-      if (data.templates) {
-        data.templates = data.templates.map((t: any) => ({
-          ...t,
-          preview_image: t.preview_image.startsWith("/")
-            ? `${API_BASE_URL}${t.preview_image}`
-            : t.preview_image,
-        }));
-      }
-
-      console.log("✅ Templates loaded:", data);
-      return data;
-    } catch (error) {
-      console.error("❌ Failed to fetch templates:", error);
-      throw error;
+    if (!templatesRequest) {
+      templatesRequest = fetchTemplates().catch((error) => {
+        templatesRequest = null;
+        console.error("❌ Failed to fetch templates:", error);
+        throw error;
+      });
     }
+    return templatesRequest;
+  },
+
+  /**
+   * Fire the templates request as early as possible (app startup) to absorb
+   * the Render cold-start latency while the splash/onboarding is on screen,
+   * rather than when the user actually reaches the upload/profile screens.
+   * Fire-and-forget: errors are swallowed here and surface normally to
+   * whichever screen later calls `getTemplates()`.
+   */
+  prefetchTemplates(): void {
+    resumeApi.getTemplates().catch(() => {});
   },
 
   async uploadResume(

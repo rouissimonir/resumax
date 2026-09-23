@@ -18,6 +18,12 @@ import { RevenueCatProvider } from "@/contexts/RevenueCatContext";
 
 import OnboardingScreen from "@/screens/OnboardingScreen";
 import { SplashScreen } from "@/components/SplashScreen";
+import { resumeApi } from "@/services/resumeApi";
+
+// Kick off the templates fetch immediately on app launch, before any screen
+// mounts, so a cold Render backend has the whole splash/onboarding window to
+// wake up instead of stalling the upload/profile screens later.
+resumeApi.prefetchTemplates();
 
 // Keep Expo's native splash (the static image from app.json) on screen until
 // we explicitly hide it below. Without this it auto-hides the instant the JS
