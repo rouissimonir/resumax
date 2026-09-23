@@ -60,6 +60,12 @@ export default function UploadScreen() {
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
   const [processingStage, setProcessingStage] = useState<string>("");
   const [templates, setTemplates] = useState<CVTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+  // Shown next to a "Try again" button when the templates fetch fails, e.g.
+  // the backend is a Render free-tier instance that can take 20-50s to wake
+  // from idle — a fetch made right as the screen mounts can time out during
+  // that window, and previously the section just vanished with no way back.
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] =
     useState<string>("professional");
   const [showTemplatePreview, setShowTemplatePreview] = useState(false);
@@ -67,6 +73,17 @@ export default function UploadScreen() {
   const [progress, setProgress] = useState<number>(0);
 
   const enterAnim = useRef(new Animated.Value(0)).current;
+
+  // Auto-retry backoff for the templates fetch. Render's free tier can take
+  // 20-50s to wake from idle, so one failed attempt right on mount doesn't
+  // necessarily mean the backend is actually down — these delays (summing to
+  // ~19s) give a cold instance time to come up before we give up and hand
+  // the user a manual "Try again" button.
+  const TEMPLATES_RETRY_DELAYS_MS = [3000, 6000, 10000];
+  const templatesRetryCount = useRef(0);
+  const templatesRetryTimeout = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   // Templates are fetched on mount, but AsyncStorage resolves a tick later, so
   // the first loadTemplates() can run before the saved format is known. Apply
@@ -87,9 +104,32 @@ export default function UploadScreen() {
       duration: Animations.slow,
       useNativeDriver: true,
     }).start();
+
+    // Cancel a pending auto-retry if the screen unmounts mid-backoff, so we
+    // never call setState on an unmounted component.
+    return () => {
+      if (templatesRetryTimeout.current) {
+        clearTimeout(templatesRetryTimeout.current);
+      }
+    };
   }, []);
 
-  const loadTemplates = async () => {
+  /**
+   * Fetch templates. `isRetry` distinguishes an automatic retry from a fresh
+   * attempt (mount, or the user tapping "Try again"): a fresh attempt resets
+   * the backoff counter so tapping the button always gets the full retry
+   * budget again, rather than being starved by an earlier failed sequence.
+   */
+  const loadTemplates = async (isRetry = false) => {
+    if (!isRetry) {
+      templatesRetryCount.current = 0;
+      if (templatesRetryTimeout.current) {
+        clearTimeout(templatesRetryTimeout.current);
+        templatesRetryTimeout.current = null;
+      }
+    }
+    setTemplatesLoading(true);
+    setTemplatesError(null);
     try {
       const response = await resumeApi.getTemplates();
       setTemplates(response.templates);
@@ -102,8 +142,28 @@ export default function UploadScreen() {
         );
         setSelectedTemplate(preferred ? preferred.id : response.templates[0].id);
       }
+      templatesRetryCount.current = 0;
+      setTemplatesLoading(false);
     } catch (error) {
       console.error("Failed to load templates:", error);
+      const attempt = templatesRetryCount.current;
+      if (attempt < TEMPLATES_RETRY_DELAYS_MS.length) {
+        // Stay in the loading state through the auto-retry sequence — the
+        // user sees "Loading templates…" rather than a premature error that
+        // a few seconds' wait would have made unnecessary.
+        templatesRetryCount.current = attempt + 1;
+        templatesRetryTimeout.current = setTimeout(
+          () => loadTemplates(true),
+          TEMPLATES_RETRY_DELAYS_MS[attempt],
+        );
+      } else {
+        setTemplatesError(
+          error instanceof Error
+            ? error.message
+            : "Couldn't load templates. Please try again.",
+        );
+        setTemplatesLoading(false);
+      }
     }
   };
 
@@ -307,6 +367,38 @@ export default function UploadScreen() {
               </View>
 
               {/* Templates */}
+              {templates.length === 0 && (templatesLoading || templatesError) && (
+                <View style={styles.section}>
+                  <ThemedText type="overline" tone="muted">
+                    TEMPLATE
+                  </ThemedText>
+                  <View style={styles.templatesStatus}>
+                    {templatesLoading ? (
+                      <ThemedText tone="secondary" type="bodySmall">
+                        Loading templates…
+                      </ThemedText>
+                    ) : (
+                      <>
+                        <ThemedText tone="secondary" type="bodySmall">
+                          Couldn't load templates.
+                        </ThemedText>
+                        <Pressable
+                          onPress={() => loadTemplates()}
+                          style={({ pressed }) => [
+                            { marginTop: Spacing.sm },
+                            pressed && { opacity: PressedOpacity },
+                          ]}
+                        >
+                          <ThemedText type="bodySmall" style={{ color: theme.primary }}>
+                            Try again
+                          </ThemedText>
+                        </Pressable>
+                      </>
+                    )}
+                  </View>
+                </View>
+              )}
+
               {templates.length > 0 && (
                 <View style={styles.section}>
                   <View style={styles.sectionHead}>
@@ -628,6 +720,9 @@ const styles = StyleSheet.create({
     marginHorizontal: Spacing.md,
   },
 
+  templatesStatus: {
+    alignItems: "flex-start",
+  },
   templateScroll: {
     gap: Spacing.md,
     paddingRight: Spacing.lg,

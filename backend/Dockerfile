@@ -3,7 +3,17 @@ FROM python:3.10-bullseye
 
 # 2. Install System Dependencies
 # ADDED: tesseract-ocr (Required for pytesseract)
-RUN apt-get update && apt-get install -y \
+#
+# Debian 11 (bullseye) is EOL, and this base image's bullseye-security source
+# now 404s, which made the whole `apt-get update` fail ("unable to fetch some
+# archives", exit code 100) on every build — Render then kept serving the
+# last image that had built successfully, well behind what was on master.
+# The main and bullseye-updates sources (deb.debian.org) still work fine;
+# only the dead security line needs to go. Verified locally against
+# python:3.10-bullseye before relying on it again.
+RUN sed -i '/debian-security/d' /etc/apt/sources.list \
+    && apt-get update \
+    && apt-get install -y \
     poppler-utils \
     libgl1-mesa-glx \
     libglib2.0-0 \
