@@ -22,7 +22,7 @@ executor = ThreadPoolExecutor(max_workers=4)
 load_dotenv()
 
 from services.pdf_service import extract_text_from_pdf, generate_improved_pdf
-from services.ai_service import improve_resume_text
+from services.ai_service import improve_resume_text, LLM_MODEL, uses_gemini
 from services.templates import list_templates
 
 # Configure logging with explicit stream handler to ensure console output
@@ -41,16 +41,16 @@ logger = logging.getLogger(__name__)
 logger.info("=" * 80)
 logger.info("BACKEND STARTUP - ENVIRONMENT CHECK")
 logger.info("=" * 80)
-api_key = os.getenv("GROQ_API_KEY", "")
-model = os.getenv("LLM_MODEL", "")
-if api_key:
-    logger.info(f"✓ GROQ_API_KEY loaded: {api_key[:10]}...{api_key[-5:]}")
+logger.info(f"LLM_MODEL: {LLM_MODEL}" + ("" if os.getenv("LLM_MODEL") else " (default)"))
+provider_key = "GEMINI_API_KEY" if uses_gemini(LLM_MODEL) else "GROQ_API_KEY"
+if os.getenv(provider_key):
+    logger.info(f"✓ {provider_key} is set")
 else:
-    logger.error("✗ GROQ_API_KEY NOT FOUND!")
-if model:
-    logger.info(f"✓ LLM_MODEL: {model}")
-else:
-    logger.warning("⚠️ LLM_MODEL not set, will use default")
+    logger.error(f"✗ {provider_key} NOT FOUND - every resume upload will fail")
+if not os.getenv("REVENUECAT_API_KEY"):
+    logger.error(
+        "✗ REVENUECAT_API_KEY NOT FOUND - Pro checks run in MOCK MODE and grant Pro to everyone"
+    )
 logger.info("=" * 80)
 
 app = FastAPI(title="Resumax API")
@@ -80,8 +80,23 @@ OUTPUT_DIR = "backend/outputs"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Progress tracking
+# Progress tracking. Bounded: entries were never removed, so the dict grew for
+# the lifetime of the process. Oldest entries go first (dicts keep insertion order).
 progress_store = {}
+MAX_PROGRESS_ENTRIES = 500
+
+
+def prune_progress_store():
+    while len(progress_store) > MAX_PROGRESS_ENTRIES:
+        progress_store.pop(next(iter(progress_store)))
+
+
+def validate_file_id(file_id: str) -> str:
+    """file_id is interpolated into filesystem paths, so only accept a UUID."""
+    try:
+        return str(uuid.UUID(file_id))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file id")
 
 # ── Auto-cleanup: delete files older than 1 hour to prevent disk fill ──────────
 def cleanup_old_files(directory: str, max_age_seconds: int = 3600):
@@ -270,6 +285,7 @@ async def get_templates():
 @app.get("/api/progress/{file_id}")
 async def get_progress(file_id: str):
     """Get processing progress for a file."""
+    file_id = validate_file_id(file_id)
     progress = progress_store.get(file_id, {
         "stage": "initializing",
         "message": "Starting...",
@@ -307,8 +323,9 @@ async def upload_resume(
     
     file_id = str(uuid.uuid4())
     timestamp = datetime.now().isoformat()
-    
+
     # Initialize progress
+    prune_progress_store()
     progress_store[file_id] = {
         "stage": "uploading",
         "message": "Uploading your resume...",
@@ -448,18 +465,25 @@ async def upload_resume(
         # being flattened into a generic 500 by the except below.
         raise
     except Exception as e:
+        # Full detail stays in the server log; the raw exception text (provider
+        # error payloads, file paths) is not something to show end users.
         logger.error(f"Error processing resume: {str(e)}", exc_info=True)
+        user_message = (
+            "We couldn't process your resume right now. "
+            "Please try again in a few minutes."
+        )
         progress_store[file_id] = {
             "stage": "error",
-            "message": f"Error: {str(e)}",
+            "message": user_message,
             "progress": 0
         }
         if os.path.exists(original_path):
             os.remove(original_path)
-        raise HTTPException(status_code=500, detail=f"Error processing resume: {str(e)}")
+        raise HTTPException(status_code=500, detail=user_message)
 
 @app.get("/api/download/{file_id}")
 async def download_resume(file_id: str):
+    file_id = validate_file_id(file_id)
     logger.info(f"Download request for file_id: {file_id}")
     file_path = os.path.join(OUTPUT_DIR, f"{file_id}_improved.pdf")
     
@@ -468,20 +492,9 @@ async def download_resume(file_id: str):
         raise HTTPException(status_code=404, detail="File not found")
     
     logger.info(f"Serving file: {file_path}")
-    
-    # Schedule deletion after serving — keep disk clean
-    async def delete_after_response():
-        import asyncio
-        await asyncio.sleep(30)  # 30s grace period in case of retries
-        try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                logger.info(f"Auto-deleted served PDF: {file_path}")
-        except Exception as e:
-            logger.warning(f"Could not auto-delete {file_path}: {e}")
 
-    asyncio.create_task(delete_after_response())
-
+    # Not deleted after serving: Share and History re-download fetch this same
+    # URL again later. cleanup_old_files() still removes it after an hour.
     return FileResponse(
         file_path,
         media_type="application/pdf",
@@ -507,15 +520,16 @@ async def generate_pdf(request: Request, body: GeneratePDFRequest):
     """
     Generate PDF for a file. Requires Pro Access verification.
     """
-    logger.info(f"Generate PDF request for file: {body.file_id}, User: {body.user_id}")
-    
-    # 1. Verify Entitlement
-    if not revenue_cat_service.verify_pro_access(body.user_id):
+    file_id = validate_file_id(body.file_id)
+    logger.info(f"Generate PDF request for file: {file_id}, User: {body.user_id}")
+
+    # 1. Verify Entitlement (a blocking HTTP call - keep it off the event loop)
+    if not await asyncio.to_thread(revenue_cat_service.verify_pro_access, body.user_id):
         logger.warning(f"Access denied for user {body.user_id}")
         raise HTTPException(status_code=403, detail="Pro access required to generate PDF")
-        
+
     # 2. Load Data
-    debug_path = os.path.join(OUTPUT_DIR, f"{body.file_id}_debug.json")
+    debug_path = os.path.join(OUTPUT_DIR, f"{file_id}_debug.json")
     if not os.path.exists(debug_path):
         raise HTTPException(status_code=404, detail="Resume data not found. Please upload again.")
         
@@ -526,16 +540,16 @@ async def generate_pdf(request: Request, body: GeneratePDFRequest):
     # 3. Generate PDF. The photo is stored per file_id, independent of format —
     #    the renderer decides whether to use it, so switching Europass -> US ->
     #    Europass simply hides and re-shows it with no state to manage.
-    improved_path = os.path.join(OUTPUT_DIR, f"{body.file_id}_improved.pdf")
+    improved_path = os.path.join(OUTPUT_DIR, f"{file_id}_improved.pdf")
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         executor, generate_improved_pdf, improved_data, improved_path,
-        body.template_id, photo_path_for(body.file_id),
+        body.template_id, photo_path_for(file_id),
     )
 
     return {
         "status": "success",
-        "download_url": f"/api/download/{body.file_id}"
+        "download_url": f"/api/download/{file_id}"
     }
 
 
@@ -543,6 +557,7 @@ async def generate_pdf(request: Request, body: GeneratePDFRequest):
 @limiter.limit("20/minute")
 async def upload_photo(request: Request, file_id: str = Form(...), photo: UploadFile = File(...)):
     """Attach or replace the headshot for an existing job."""
+    file_id = validate_file_id(file_id)
     if not os.path.exists(os.path.join(OUTPUT_DIR, f"{file_id}_debug.json")):
         raise HTTPException(status_code=404, detail="Resume data not found. Please upload again.")
     save_photo(file_id, await read_upload_capped(photo, MAX_PHOTO_BYTES))
@@ -552,6 +567,7 @@ async def upload_photo(request: Request, file_id: str = Form(...), photo: Upload
 @app.delete("/api/photo/{file_id}")
 async def delete_photo(file_id: str):
     """Remove the headshot. Idempotent."""
+    file_id = validate_file_id(file_id)
     path = os.path.join(UPLOAD_DIR, f"{file_id}_photo.jpg")
     if os.path.exists(path):
         try:

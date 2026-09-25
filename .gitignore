@@ -74,8 +74,10 @@ wheels/
 venv/
 ENV/
 
-# Backend uploads and outputs
+# Backend uploads and outputs (the server writes to backend/backend/* when
+# started from inside backend/, which is how it runs locally and on Render)
 backend/uploads/
 backend/outputs/
-backend/.env
+backend/backend/uploads/
+backend/backend/outputs/
 backend/.env

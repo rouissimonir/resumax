@@ -80,8 +80,31 @@ export default function PreviewScreen() {
     }).start();
   }, [downloadProgress]);
 
+  /**
+   * Download and Share both hand the user the PDF, so both go through this
+   * gate. A resume already paid for (free credit spent on it, or downloaded
+   * while Pro) stays accessible without charging again.
+   */
+  const ensureCanDownload = (): boolean => {
+    if (resume?.paidFor || canDownload) return true;
+    Alert.alert(
+      "You've used your free CV",
+      "Tailoring your CV to each job is what actually moves the needle — " +
+        "unlock unlimited downloads to keep going.",
+      [
+        { text: "Not now", style: "cancel" },
+        {
+          text: "See plans",
+          onPress: () => navigation.navigate("Pricing" as any),
+        },
+      ],
+    );
+    return false;
+  };
+
   const handleShare = async () => {
     if (!resume) return;
+    if (!ensureCanDownload()) return;
     try {
       const downloadUrl = resumeApi.getDownloadUrl(resume.id);
 
@@ -96,6 +119,7 @@ export default function PreviewScreen() {
           await navigator.clipboard.writeText(downloadUrl);
           Alert.alert("Link copied", "Download link copied to clipboard.");
         }
+        await settleFreeDownload();
         return;
       }
 
@@ -109,6 +133,8 @@ export default function PreviewScreen() {
       if (!result || result.status !== 200) {
         throw new Error("Failed to download PDF for sharing");
       }
+
+      await settleFreeDownload();
 
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(fileUri, {
@@ -128,11 +154,16 @@ export default function PreviewScreen() {
     }
   };
 
+  // The header outlives this render, so it calls the latest handleShare
+  // through a ref instead of capturing a stale copy of the paywall state.
+  const shareRef = useRef(handleShare);
+  shareRef.current = handleShare;
+
   React.useLayoutEffect(() => {
     navigation.setOptions({
       headerRight: () => (
         <Pressable
-          onPress={handleShare}
+          onPress={() => shareRef.current()}
           hitSlop={10}
           accessibilityLabel="Share resume"
           style={({ pressed }) => [
@@ -186,19 +217,7 @@ export default function PreviewScreen() {
 
       // Every install gets one free download. Gate on canDownload rather
       // than isPro so that first one gets through without a purchase.
-      if (!canDownload) {
-        Alert.alert(
-          "You've used your free CV",
-          "Tailoring your CV to each job is what actually moves the needle — " +
-            "unlock unlimited downloads to keep going.",
-          [
-            { text: "Not now", style: "cancel" },
-            {
-              text: "See plans",
-              onPress: () => navigation.navigate("Pricing" as any),
-            },
-          ],
-        );
+      if (!ensureCanDownload()) {
         setIsDownloading(false);
         return;
       }

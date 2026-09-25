@@ -2,11 +2,13 @@ import logging
 import os
 import requests
 from datetime import datetime
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
 REVENUECAT_API_KEY = os.getenv("REVENUECAT_API_KEY", "mock_key")
 REVENUECAT_API_URL = "https://api.revenuecat.com/v1"
+REVENUECAT_TIMEOUT_SECONDS = 10
 
 class RevenueCatService:
     def __init__(self):
@@ -16,20 +18,20 @@ class RevenueCatService:
         """
         Verify if the user has active 'pro_access' entitlement.
         """
-        # MOCK MODE: If no real API key is set, allow access for testing
+        # MOCK MODE: with no real API key set, every user is treated as Pro.
         if self.api_key == "mock_key":
             logger.warning("RevenueCat running in MOCK MODE. Granting access.")
             return True
 
         try:
-            url = f"{REVENUECAT_API_URL}/subscribers/{user_id}"
+            url = f"{REVENUECAT_API_URL}/subscribers/{quote(user_id, safe='')}"
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
                 "Accept": "application/json"
             }
-            
-            response = requests.get(url, headers=headers)
+
+            response = requests.get(url, headers=headers, timeout=REVENUECAT_TIMEOUT_SECONDS)
             
             if response.status_code != 200:
                 logger.error(f"RevenueCat API error: {response.status_code} - {response.text}")

@@ -220,6 +220,7 @@ export default function UploadScreen() {
       improvedText: "",
       dateProcessed: new Date(),
       status: "processing",
+      templateId: selectedTemplate,
     });
 
     try {
@@ -270,6 +271,7 @@ export default function UploadScreen() {
         dateProcessed: new Date(),
         status: "completed",
         downloadUrl: response.download_url,
+        templateId: selectedTemplate,
       });
 
       setCurrentProcessingId(null);

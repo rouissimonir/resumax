@@ -5,7 +5,8 @@ paddlepaddle
 paddleocr
 pdf2image
 pillow
-google-generativeai
+google-genai>=1.0
+requests
 fpdf2>=2.8
 numpy
 opencv-python-headless

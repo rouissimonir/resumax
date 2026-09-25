@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   View,
   StyleSheet,
@@ -21,7 +21,7 @@ import { ThemedText } from "@/components/ThemedText";
 import { Card } from "@/components/Card";
 import { useTheme } from "@/hooks/useTheme";
 import { Spacing, BorderRadius, Typography, Shadows, Hairline } from "@/constants/theme";
-import { useResumes } from "@/contexts/ResumeContext";
+import { useResumes, isServerCopyExpired } from "@/contexts/ResumeContext";
 import { useRevenueCat } from "@/contexts/RevenueCatContext";
 import { HistoryStackParamList } from "@/navigation/HistoryStackNavigator";
 import { resumeApi } from "@/services/resumeApi";
@@ -48,6 +48,33 @@ export default function ResumeDetailScreen() {
 
   const resume = getResumeById(route.params.resumeId);
 
+  // The header outlives this render, so it calls the latest handleShare
+  // through a ref instead of capturing a stale copy of the paywall state.
+  const shareRef = useRef<() => void>(() => {});
+
+  React.useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <Pressable
+          onPress={() => shareRef.current()}
+          style={({ pressed }) => [
+            styles.headerButton,
+            pressed && { opacity: 0.6 },
+          ]}
+          accessibilityLabel="Share resume"
+          hitSlop={10}
+        >
+          <Feather name="share-2" size={19} color={theme.primary} />
+          <ThemedText
+            style={[Typography.bodySmall, { color: theme.primary, fontWeight: "600" }]}
+          >
+            Share
+          </ThemedText>
+        </Pressable>
+      ),
+    });
+  }, [navigation, theme]);
+
   if (!resume) {
     return (
       <ScreenScrollView>
@@ -71,29 +98,43 @@ export default function ResumeDetailScreen() {
     updateResume(resume.id, { paidFor: true });
   };
 
-  const handleDownload = async () => {
-    // This screen used to hit /api/download/{id} with no gate at all. Since
-    // /api/upload-resume already renders a PDF on the first pass, that made
-    // PreviewScreen's canDownload check the ONLY thing standing between a
-    // free user and unlimited downloads — skip it here, open History, and
-    // every resume downloads free forever. A resume already paid for (its
-    // own free credit already spent on it, or downloaded while Pro) is
-    // exempt, so this doesn't charge twice for the same file.
-    if (!resume.paidFor && !canDownload) {
+  // This screen used to hit /api/download/{id} with no gate at all. Since
+  // /api/upload-resume already renders a PDF on the first pass, that made
+  // PreviewScreen's canDownload check the ONLY thing standing between a
+  // free user and unlimited downloads — skip it here, open History, and
+  // every resume downloads free forever. A resume already paid for (its
+  // own free credit already spent on it, or downloaded while Pro) is
+  // exempt, so this doesn't charge twice for the same file. Share hands
+  // over the same PDF, so it goes through this gate too.
+  const ensureCanDownload = (): boolean => {
+    // The server only keeps files for an hour; say so instead of a bare
+    // "Download failed" from the 404.
+    if (isServerCopyExpired(resume)) {
       Alert.alert(
-        "You've used your free CV",
-        "Tailoring your CV to each job is what actually moves the needle — " +
-          "unlock unlimited downloads to keep going.",
-        [
-          { text: "Not now", style: "cancel" },
-          {
-            text: "See plans",
-            onPress: () => navigation.navigate("Pricing" as any),
-          },
-        ],
+        "This file has expired",
+        "For your privacy, processed resumes are only kept for an hour. " +
+          "Upload your resume again to get a fresh copy.",
       );
-      return;
+      return false;
     }
+    if (resume.paidFor || canDownload) return true;
+    Alert.alert(
+      "You've used your free CV",
+      "Tailoring your CV to each job is what actually moves the needle — " +
+        "unlock unlimited downloads to keep going.",
+      [
+        { text: "Not now", style: "cancel" },
+        {
+          text: "See plans",
+          onPress: () => navigation.navigate("Pricing" as any),
+        },
+      ],
+    );
+    return false;
+  };
+
+  const handleDownload = async () => {
+    if (!ensureCanDownload()) return;
 
     try {
       setIsDownloading(true);
@@ -171,6 +212,7 @@ export default function ResumeDetailScreen() {
   };
 
   const handleShare = async () => {
+    if (!ensureCanDownload()) return;
     try {
       const downloadUrl = resumeApi.getDownloadUrl(resume.id);
       if (Platform.OS === "web") {
@@ -182,6 +224,7 @@ export default function ResumeDetailScreen() {
         } else {
           Alert.alert("Link Copied", "Download link copied to clipboard");
         }
+        await settleDownload();
         return;
       }
 
@@ -191,8 +234,11 @@ export default function ResumeDetailScreen() {
         fileUri,
       );
       const result = await downloadResumable.downloadAsync();
+      if (!result || result.status !== 200) throw new Error("Download failed");
 
-      if ((await Sharing.isAvailableAsync()) && result) {
+      await settleDownload();
+
+      if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(result.uri, { mimeType: "application/pdf" });
       }
     } catch (error) {
@@ -200,28 +246,7 @@ export default function ResumeDetailScreen() {
     }
   };
 
-  React.useLayoutEffect(() => {
-    navigation.setOptions({
-      headerRight: () => (
-        <Pressable
-          onPress={handleShare}
-          style={({ pressed }) => [
-            styles.headerButton,
-            pressed && { opacity: 0.6 },
-          ]}
-          accessibilityLabel="Share resume"
-          hitSlop={10}
-        >
-          <Feather name="share-2" size={19} color={theme.primary} />
-          <ThemedText
-            style={[Typography.bodySmall, { color: theme.primary, fontWeight: "600" }]}
-          >
-            Share
-          </ThemedText>
-        </Pressable>
-      ),
-    });
-  }, [navigation, theme]);
+  shareRef.current = handleShare;
 
   return (
     <>
@@ -338,6 +363,7 @@ export default function ResumeDetailScreen() {
         visible={showPreview}
         animationType="slide"
         presentationStyle="pageSheet"
+        onRequestClose={() => setShowPreview(false)}
       >
         <View
           style={[
@@ -382,7 +408,7 @@ export default function ResumeDetailScreen() {
                         ]}
                       >
                         {[
-                          data.header.location,
+                          data.header.address ?? data.header.location,
                           data.header.phone,
                           data.header.email,
                           data.header.linkedin,
@@ -402,7 +428,7 @@ export default function ResumeDetailScreen() {
                           { backgroundColor: theme.border },
                         ]}
                       />
-                      {data.experience.map((exp: any, idx: number) => (
+                      {(data.experience ?? []).map((exp: any, idx: number) => (
                         <View key={idx} style={styles.previewItem}>
                           <View style={styles.previewItemHeader}>
                             <ThemedText style={Typography.h4}>
@@ -425,7 +451,7 @@ export default function ResumeDetailScreen() {
                           >
                             {exp.company}
                           </ThemedText>
-                          {exp.bullets.map((bullet: string, bidx: number) => (
+                          {(exp.bullets ?? []).map((bullet: string, bidx: number) => (
                             <ThemedText key={bidx} style={styles.previewBullet}>
                               • {bullet}
                             </ThemedText>
@@ -444,7 +470,7 @@ export default function ResumeDetailScreen() {
                           { backgroundColor: theme.border },
                         ]}
                       />
-                      {data.education.map((edu: any, idx: number) => (
+                      {(data.education ?? []).map((edu: any, idx: number) => (
                         <View key={idx} style={styles.previewItem}>
                           <View style={styles.previewItemHeader}>
                             <ThemedText style={Typography.h4}>
@@ -556,8 +582,65 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.lg,
     borderTopWidth: 1,
   },
-  downloadButton: { height: Spacing.buttonHeight, borderRadius: BorderRadius.md, overflow: "hidden", ...Shadows.glow },
+  downloadButtonContainer: {
+    position: "absolute",
+    left: Spacing.lg,
+    right: Spacing.lg,
+  },
+  downloadButton: {
+    height: Spacing.buttonHeight,
+    borderRadius: BorderRadius.md,
+    overflow: "hidden",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    ...Shadows.glow,
+  },
   downloadGradient: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center" },
+
+  contentCard: {
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    marginBottom: Spacing.lg,
+  },
+  previewIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  previewModalContainer: { flex: 1 },
+  previewModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+  },
+  closeButton: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
+  previewContent: { padding: Spacing.lg, paddingBottom: 40 },
+  previewPaper: { paddingBottom: Spacing.lg },
+  previewHeaderSection: { marginBottom: Spacing.xl, gap: 4 },
+  previewSection: { marginBottom: Spacing.lg },
+  previewSectionTitle: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1.5,
+    marginBottom: 4,
+  },
+  previewDivider: { height: 1, marginBottom: Spacing.md },
+  previewItem: { marginBottom: Spacing.md },
+  previewItemHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: Spacing.sm,
+  },
+  previewBullet: { fontSize: 13, lineHeight: 19, marginTop: 4 },
 
   modalRoot: { flex: 1 },
   modalHeader: { borderBottomWidth: 1, paddingBottom: Spacing.md },

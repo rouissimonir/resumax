@@ -1,6 +1,6 @@
 import os
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from google import genai
+from google.genai import types as genai_types
 import logging
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -10,17 +10,23 @@ from concurrent.futures import ThreadPoolExecutor
 # user switched format. The renderer decides what to display; this file always
 # extracts the maximal document.
 
-# Thread pool for running blocking Gemini API calls
+# Thread pool for the (sync) Groq client
 _executor = ThreadPoolExecutor(max_workers=4)
 
 logger = logging.getLogger(__name__)
 
-# Configure Gemini
+# A rolling alias rather than a pinned version: Google retires pinned Gemini
+# versions on short notice (1.5-flash, then 2.0-flash, each 404'd every upload
+# in production). Pin a specific model via the LLM_MODEL env var if needed.
+DEFAULT_LLM_MODEL = "gemini-flash-latest"
+LLM_MODEL = os.getenv("LLM_MODEL") or DEFAULT_LLM_MODEL
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-else:
-    logger.warning("GEMINI_API_KEY not found in environment variables")
+_gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+
+
+def uses_gemini(model_name: str) -> bool:
+    return model_name.lower().startswith("gemini")
 
 SYSTEM_PROMPT = """You are an expert resume improvement assistant specialized in creating ATS-optimized, professional resumes.
 
@@ -317,7 +323,7 @@ async def improve_resume_text(
     logger.info(f"Template ID: {template_id}")
     
     try:
-        model_name = os.getenv("LLM_MODEL", "gemini-2.0-flash")
+        model_name = LLM_MODEL
         logger.info(f"Using model: {model_name}")
 
         # Pre-process: Extract contact info using regex (more reliable than LLM for messy OCR)
@@ -452,29 +458,30 @@ async def improve_resume_text(
         # contain "llama"), and a substring check tied to one model family
         # silently misroutes to Gemini instead of erroring when the model
         # changes. Anything not explicitly Gemini goes to Groq.
-        if model_name.lower().startswith("gemini"):
+        if uses_gemini(model_name):
             logger.info("Using GOOGLE/GEMINI Provider")
-            api_key = os.getenv("GEMINI_API_KEY", "")
-            if not api_key:
-                logger.error("✗ GEMINI_API_KEY NOT FOUND!")
-                return {"header": {"name": "Simulation User"}, "skills": "Error: No API Key"}
+            if _gemini_client is None:
+                raise RuntimeError("GEMINI_API_KEY is not configured")
 
-            model = genai.GenerativeModel(
-                model_name=model_name,
-                generation_config={
-                    "temperature": 0.0,
-                    "response_mime_type": "application/json",
-                }
-            )
-
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                _executor, model.generate_content, prompt
+            response = await _gemini_client.aio.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    temperature=0.0,
+                    response_mime_type="application/json",
+                    automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(
+                        disable=True
+                    ),
+                ),
             )
             response_text = response.text
+            if not response_text:
+                raise RuntimeError("Gemini returned an empty response")
 
         else:
             logger.info("Using GROQ Provider")
+            if not os.getenv("GROQ_API_KEY"):
+                raise RuntimeError("GROQ_API_KEY is not configured")
             from groq import Groq
             client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
