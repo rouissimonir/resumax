@@ -317,7 +317,7 @@ async def improve_resume_text(
     logger.info(f"Template ID: {template_id}")
     
     try:
-        model_name = os.getenv("LLM_MODEL", "gemini-1.5-flash")
+        model_name = os.getenv("LLM_MODEL", "gemini-2.0-flash")
         logger.info(f"Using model: {model_name}")
 
         # Pre-process: Extract contact info using regex (more reliable than LLM for messy OCR)
